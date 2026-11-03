@@ -65,7 +65,7 @@ String 6: Bb (116.54 Hz)
 **Run Plugin Scanner:**
 ```lua
 -- Execute this script in REAPER:
-D:\[Reaper Custom]\ReaScripts\scan-real-plugins.lua
+<REAPER resource path>/Scripts/scan-real-plugins.lua
 ```
 
 **Critical Plugins Checklist:**

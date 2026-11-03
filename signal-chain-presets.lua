@@ -433,7 +433,7 @@ SIGNAL_CHAIN_LIBRARY = {
       reference_matching = {
         enabled = true,
         update_rate = "per_section",
-        parameters = [eq_curve", "dynamics", "stereo_width]
+        parameters = {"eq_curve", "dynamics", "stereo_width"}
       }
     }
   },
@@ -464,7 +464,7 @@ SIGNAL_CHAIN_LIBRARY = {
       },
       
       loudness_meters = {
-        standards = ["ebu_r128", "atsc_a85", "aes_streaming"],
+        standards = {"ebu_r128", "atsc_a85", "aes_streaming"},
         true_peak = true,
         history_graph = true,
         loudness_range = true
