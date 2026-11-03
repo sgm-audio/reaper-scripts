@@ -364,6 +364,7 @@ end
 local AIHubController = {}
 AIHubController.__index = AIHubController
 
+function AIHubController:new()
     local controller = {}
     setmetatable(controller, AIHubController)
     
