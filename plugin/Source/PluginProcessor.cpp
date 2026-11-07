@@ -1,10 +1,18 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <cmath>
 #include <type_traits>
 
 namespace
 {
+float normalizeUnityGain(float decibels) noexcept
+{
+    // Normalized float parameter mapping can return ~1e-6 dB for default 0 dB
+    // on GCC/Clang. This threshold is far below the legal 0.1 dB parameter step.
+    return std::abs(decibels) < 0.0001f ? 0.0f : decibels;
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     using Parameter = juce::AudioParameterFloat;
@@ -33,7 +41,7 @@ void SGMUtilityAudioProcessor::prepareToPlay(double sampleRate, int)
 {
     gain.reset(sampleRate, 0.020);
     doubleGain.reset(sampleRate, 0.020);
-    const auto decibels = parameters.getRawParameterValue("gain")->load();
+    const auto decibels = normalizeUnityGain(parameters.getRawParameterValue("gain")->load());
     const auto linear = juce::Decibels::decibelsToGain<double>(decibels, -60.0);
     gain.setCurrentAndTargetValue(static_cast<float>(linear));
     doubleGain.setCurrentAndTargetValue(linear);
@@ -62,7 +70,7 @@ void SGMUtilityAudioProcessor::process(juce::AudioBuffer<SampleType>& buffer)
     if (parameters.getRawParameterValue("bypass")->load() >= 0.5f)
         return;
 
-    const auto decibels = parameters.getRawParameterValue("gain")->load();
+    const auto decibels = normalizeUnityGain(parameters.getRawParameterValue("gain")->load());
     const auto linear = juce::Decibels::decibelsToGain<double>(decibels, -60.0);
     if constexpr (std::is_same<SampleType, float>::value)
     {
