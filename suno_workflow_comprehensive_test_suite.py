@@ -323,9 +323,12 @@ class TestBatchProcessor(unittest.TestCase):
         with open(os.path.join(self.test_dir, "readme.txt"), "w") as f:
             f.write("test")
 
-        audio_files = processor.process_directory(self.test_dir)
+        with patch.object(processor, "process_files", return_value=[]) as process:
+            audio_files = processor.process_directory(self.test_dir)
 
         self.assertIsInstance(audio_files, list)
+        discovered = {os.path.basename(path) for path in process.call_args.args[0]}
+        self.assertEqual(discovered, {"test1.mp3", "test2.wav", "test3.flac"})
 
     def test_extension_filtering(self):
         """Test file extension filtering"""
@@ -336,10 +339,13 @@ class TestBatchProcessor(unittest.TestCase):
         self.create_test_audio("test2.wav")
         self.create_test_audio("test3")  # Will get .wav extension automatically
 
-        # Test with specific extensions
-        results = processor.process_directory(self.test_dir, extensions=[".wav"])
+        # Test with specific extensions without invoking the heavy ML backend.
+        with patch.object(processor, "process_files", return_value=[]) as process:
+            results = processor.process_directory(self.test_dir, extensions=[".wav"])
 
         self.assertIsInstance(results, list)
+        discovered = {os.path.basename(path) for path in process.call_args.args[0]}
+        self.assertEqual(discovered, {"test2.wav", "test3.wav"})
 
     def test_parallel_processing_setting(self):
         """Test parallel processing configuration"""

@@ -172,6 +172,36 @@ class YourMT3StemSeparator:
     def _demucs_available() -> bool:
         return importlib.util.find_spec("demucs") is not None
 
+    @classmethod
+    def download_model(cls, model_name: str = "htdemucs") -> str:
+        """Download and load a Demucs model, returning its container type.
+
+        Demucs 4.1+ uses the official Hugging Face repository first and falls
+        back to its legacy torch-hub repository. No audio inference is run.
+        """
+        if not model_name.strip():
+            raise ValueError("model_name must not be empty")
+        if not cls._demucs_available():
+            raise RuntimeError(
+                "Demucs is not installed. Install the ML backend with "
+                "`python -m pip install -e .[stem-separation]` first."
+            )
+        try:
+            pretrained = importlib.import_module("demucs.pretrained")
+        except ImportError as exc:
+            raise RuntimeError(
+                f"Demucs or one of its runtime dependencies could not be imported: {exc}"
+            ) from exc
+        try:
+            model = pretrained.get_model(model_name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not download or load Demucs model '{model_name}': {exc}. "
+                "Check network access to huggingface.co and dl.fbaipublicfiles.com, "
+                "or use the manual cache instructions in README.md."
+            ) from exc
+        return type(model).__name__
+
     def separate(self, audio_file: str, stems: Optional[Sequence[str]] = None) -> Dict[str, str]:
         """Separate *audio_file* and return canonical stem paths.
 
@@ -227,7 +257,11 @@ class YourMT3StemSeparator:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", help="Input audio file")
+    parser.add_argument("input", nargs="?", help="Input audio file")
+    parser.add_argument(
+        "--download-model", action="store_true",
+        help="Download and verify the selected model without processing audio",
+    )
     parser.add_argument("-o", "--output", default="stems", help="Output directory")
     parser.add_argument("--model", default="htdemucs", help="Demucs model name")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
@@ -235,6 +269,17 @@ def main(argv=None) -> int:
     parser.add_argument("--timeout", type=int, default=1800)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
+    if args.download_model:
+        if args.input:
+            parser.error("input audio is not used with --download-model")
+        try:
+            container = YourMT3StemSeparator.download_model(args.model)
+        except (OSError, RuntimeError, ValueError) as exc:
+            parser.exit(1, f"error: {exc}\n")
+        print(f"Demucs model '{args.model}' is available and loadable ({container}).")
+        return 0
+    if not args.input:
+        parser.error("input audio is required unless --download-model is used")
     try:
         separator = YourMT3StemSeparator(
             output_dir=args.output, model_name=args.model,

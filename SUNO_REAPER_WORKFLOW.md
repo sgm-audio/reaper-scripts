@@ -45,7 +45,16 @@ python -m pip install -r requirements_yourmt3.txt
 ```
 
 Demucs downloads its selected model on first use; model downloads, available
-disk space, and execution time are separate runtime requirements.
+disk space, and execution time are separate runtime requirements. Preload and
+load-test the default model before processing a batch:
+
+```bash
+yourmt3-stems --download-model
+```
+
+The official weights, direct download links, checksum, and cache instructions are
+in [README.md — Optional Demucs ML backend and model](README.md#optional-demucs-ml-backend-and-model).
+The default model is [adefossez/HTDemucs](https://huggingface.co/adefossez/HTDemucs).
 
 The standalone package can also be installed without the heavy backend:
 
@@ -208,6 +217,16 @@ python -c "from yourmt3_stem_separator import YourMT3StemSeparator; print(YourMT
 
 `backend_available` must be true before calling `separate()`. The first real run
 may also need to download the selected Demucs model.
+
+### “Could not download or load Demucs model”
+
+Check access to `huggingface.co` and `dl.fbaipublicfiles.com`, free disk space,
+and cache-directory permissions. Run `yourmt3-stems --download-model` separately
+to expose the failure before starting a workflow. For an offline/manual cache,
+follow the official links and `hf download` instructions in
+[README.md](README.md#optional-demucs-ml-backend-and-model). Do not rename a
+random checkpoint to the expected filename: Demucs verifies model metadata and
+legacy checkpoints carry a checksum prefix.
 
 ### “Project directory is not empty”
 
