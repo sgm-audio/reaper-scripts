@@ -10,7 +10,12 @@ import pprint
 import json
 
 have_reaper = True  
-have_tk = False
+
+try:
+    import tkinter
+    have_tk = True
+except ImportError:
+    have_tk = False
 
 [NOTICE, WARNING, ERROR, NONE] = range(4)
 log_level = WARNING
@@ -548,7 +553,7 @@ class AAFInterface:
                 "platform": identity["Platform"].value
             }
         except Exception:
-            warn("Could not get file identity metadata.", WARNING)
+            log("Could not get file identity metadata.", WARNING)
             return {}
 
 

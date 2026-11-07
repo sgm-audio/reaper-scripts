@@ -3,10 +3,16 @@
 -- Version 1.0
 
 local scripts_to_test = {
-  "rule-of-30-session-builder.lua",
+  "SGM_Professional_Session_Builder.lua",
   "rule-of-30-plugin-presets.lua",
   "scan-real-plugins.lua",
-  "phase-alignment-tool.lua"
+  "phase-alignment-tool.lua",
+  "plugin-wrapper.lua",
+  "signal-chain-presets.lua",
+  "list-all-available-plugins.lua",
+  "reaper-template-installer.lua",
+  "Reaper AI Control Hub.lua",
+  "SGM_plugin_development_blueprint.lua"
 }
 
 -- Get the directory where THIS validator script is located

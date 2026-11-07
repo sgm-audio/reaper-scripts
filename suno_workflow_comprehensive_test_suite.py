@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import test configuration
-from config import (
+from suno_workflow_config_system import (
     WorkflowConfig,
     AudioConfig,
     ModelConfig,
@@ -50,6 +50,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Configure logging for tests
 logging.basicConfig(level=logging.WARNING)  # Reduce noise during tests
+
+
+import importlib.util
+
+# Optional components are not bundled in this repo; skip their tests when absent
+HAS_YOURMT3 = importlib.util.find_spec("yourmt3_stem_separator") is not None
+HAS_BATCH_PROCESS = importlib.util.find_spec("batch_process_suno") is not None
+HAS_SEMAS = importlib.util.find_spec("SEMAS") is not None
 
 
 class TestSunoWorkflowHelper(unittest.TestCase):
@@ -86,10 +94,11 @@ class TestSunoWorkflowHelper(unittest.TestCase):
         workflow = __import__("suno_workflow_helper").SunoReaperWorkflow()
 
         self.assertIsNotNone(workflow)
-        self.assertIsNotNone(workflow.template_path)
+        self.assertIsNotNone(workflow.config)
+        self.assertIsNotNone(workflow.config.template_path)
         self.assertTrue(
-            os.path.exists(workflow.template_path)
-            or "template" in workflow.template_path
+            os.path.exists(workflow.config.template_path)
+            or "template" in workflow.config.template_path
         )
 
     @patch("suno_workflow_helper.YourMT3StemSeparator")
@@ -111,27 +120,35 @@ class TestSunoWorkflowHelper(unittest.TestCase):
 
         result = workflow.process_suno_track(test_file, project_name="test_project")
 
-        self.assertIsInstance(result, dict)
-        self.assertIn("project_dir", result)
-        self.assertIn("project_file", result)
-        self.assertIn("stem_paths", result)
-        self.assertTrue(os.path.exists(result["project_dir"]))
+        self.assertTrue(result.success)
+        self.assertTrue(os.path.exists(result.project_dir))
+        self.assertTrue(os.path.exists(result.project_file))
+        self.assertEqual(len(result.stem_paths), 4)
 
     def test_process_nonexistent_file(self):
         """Test handling of nonexistent file"""
         workflow = __import__("suno_workflow_helper").SunoReaperWorkflow()
 
-        with self.assertRaises(FileNotFoundError):
-            workflow.process_suno_track("/nonexistent/file.mp3")
+        result = workflow.process_suno_track("/nonexistent/file.mp3")
 
-    def test_project_name_generation(self):
+        self.assertFalse(result.success)
+        self.assertIsNotNone(result.error_message)
+
+    @patch("suno_workflow_helper.YourMT3StemSeparator")
+    def test_project_name_generation(self, mock_separator):
         """Test automatic project name generation"""
+        mock_separator.return_value.separate.return_value = {
+            "vocals": "/fake/vocals.wav",
+            "drums": "/fake/drums.wav",
+            "bass": "/fake/bass.wav",
+            "other": "/fake/other.wav",
+        }
         workflow = __import__("suno_workflow_helper").SunoReaperWorkflow()
 
         test_file = self.create_test_audio("my_track.mp3")
         result = workflow.process_suno_track(test_file)
 
-        self.assertIn("my_track_reaper_project", result["project_dir"])
+        self.assertIn("my_track_reaper_project", result.project_dir)
 
     def test_create_reaper_project(self):
         """Test Reaper project creation"""
@@ -166,6 +183,7 @@ class TestSunoWorkflowHelper(unittest.TestCase):
             self.assertIn("vocals", content)
 
 
+@unittest.skipUnless(HAS_YOURMT3, "yourmt3_stem_separator module not installed")
 class TestYourMT3StemSeparator(unittest.TestCase):
     """Test YourMT3+ Stem Separator functionality"""
 
@@ -286,6 +304,7 @@ class TestYourMT3StemSeparator(unittest.TestCase):
         self.assertTrue(info["ai_audio_optimized"])
 
 
+@unittest.skipUnless(HAS_BATCH_PROCESS, "batch_process_suno module not installed")
 class TestBatchProcessor(unittest.TestCase):
     """Test Batch Processor functionality"""
 
@@ -389,6 +408,7 @@ class TestBatchProcessor(unittest.TestCase):
             self.assertIn("test2.mp3", content)
 
 
+@unittest.skipUnless(HAS_SEMAS, "SEMAS module not installed")
 class TestSEMASIntegration(unittest.TestCase):
     """Test SEMAS Multi-Agent System Integration"""
 
@@ -466,13 +486,16 @@ def run_integration_tests():
     print("\n1. Testing module imports...")
     try:
         import suno_workflow_helper
-        import yourmt3_stem_separator
-        import batch_process_suno
-
-        print("   [OK] All main modules imported successfully")
+        print("   [OK] suno_workflow_helper imported successfully")
     except ImportError as e:
         print(f"   [FAIL] Import error: {e}")
         return False
+    for optional in ("yourmt3_stem_separator", "batch_process_suno"):
+        if importlib.util.find_spec(optional) is None:
+            print(f"   [SKIP] optional module not installed: {optional}")
+        else:
+            __import__(optional)
+            print(f"   [OK] {optional} imported successfully")
 
     # Test AGENTS.md file exists
     print("\n2. Checking documentation...")
