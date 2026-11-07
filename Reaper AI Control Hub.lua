@@ -1,5 +1,5 @@
 -- REAPER AI Control Hub - Plugin Interface Coordinator
--- @description Plugin discovery, routing templates, and external AI tool launches
+-- @description Inspects master-track AI/routing FX, exports routing notes, and prints external-processing instructions
 -- @author Scott Mills
 -- @version 1.0
 -- Acts as bridge between REAPER and external AI processing plugins
@@ -29,7 +29,8 @@ function AIPluginBridge:new()
 end
 
 function AIPluginBridge:discover_ai_plugins()
-    msg("Discovering AI-enabled plugins...")
+    msg("Inspecting master-track FX for AI/routing tools...")
+    self.discovered_plugins = {}
     
     -- Scan for known AI plugins
     local ai_plugin_patterns = {
@@ -68,12 +69,13 @@ end
 function AIPluginBridge:_detect_plugin_type(fx_index)
     -- Detect plugin format
     local retval, fx_name = reaper.TrackFX_GetFXName(reaper.GetMasterTrack(0), fx_index, "")
-    
-    if fx_name:find(".vst3", 1, true) then
+    local lower_name = fx_name:lower()
+
+    if lower_name:find(".vst3", 1, true) then
         return "VST3"
-    elseif fx_name:find(".vst", 1, true) then
+    elseif lower_name:find(".vst", 1, true) then
         return "VST2"
-    elseif fx_name:find(".clap", 1, true) then
+    elseif lower_name:find(".clap", 1, true) then
         return "CLAP"
     else
         return "Unknown"
@@ -131,20 +133,9 @@ function AIPluginBridge:_assess_capabilities(plugin_name)
 end
 
 function AIPluginBridge:setup_rewire_host()
-    msg("Setting up ReWire host integration...")
-    
-    -- Check if ReWire is available
-    local rewire_devices = reaper.EnumAudioIOs()
-    
-    -- Look for ReWire devices
-    for i = 0, rewire_devices - 1 do
-        local retval, name = reaper.GetAudioIODeviceName(i)
-        if retval and name:find("ReWire", 1, true) then
-            msg("  Found ReWire device: " .. name)
-            -- Instructions for user to configure
-            msg("  Set this as your audio device in Preferences > Audio")
-        end
-    end
+    msg("ReWire setup is host- and OS-specific. REAPER does not expose a portable")
+    msg("ReWire device enumerator to Lua. Check Preferences > Audio > Device and")
+    msg("your other DAW's ReWire documentation; no settings were changed.")
 end
 
 function AIPluginBridge:setup_audiomovers_bridge()
@@ -193,7 +184,7 @@ function AIPluginBridge:create_ai_routing_template()
     }
     
     -- Save routing template
-    local template_path = reaper.GetProjectPath("") .. "\\ai_routing_template.json"
+    local template_path = reaper.GetResourcePath() .. "/ai_routing_template.json"
     local file = io.open(template_path, "w")
     
     if file then
@@ -266,7 +257,7 @@ function ExternalToolLauncher:_get_tool_paths()
         table.insert(paths, "C:\\Program Files\\AudioMovers\\OmniBridge")
         table.insert(paths, "C:\\Program Files\\Common Files\\VST3\\AI")
         table.insert(paths, "C:\\Program Files\\ReWire")
-    elseif os_type == "OSX64" then
+    elseif os_type:match("^OSX") then
         local home = os.getenv("HOME") or ""
         table.insert(paths, "/Applications/AudioMovers/OmniBridge.app")
         if home ~= "" then
@@ -307,46 +298,43 @@ function ExternalToolLauncher:launch_external_processing(track_indices, tool_typ
         end
     end
     
-    -- Export track stems for external processing
-    local export_dir = reaper.GetProjectPath("") .. "\\external_ai_export"
-    local exported_files = {}
-    
-    for i, track in ipairs(tracks_to_process) do
-        local track_name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
-        local exported_file = self:_export_track_stems(track, track_name, export_dir)
-        if exported_file then
-            table.insert(exported_files, exported_file)
-        end
+    -- REAPER's Lua API has no portable one-call stem renderer. Print exact
+    -- manual render targets instead of claiming that files were exported.
+    local project_path = reaper.GetProjectPath(0)
+    if project_path == "" then
+        msg("Save the project before choosing an external export directory.")
+        return {}
     end
-    
-    -- Launch external tool
+    local export_dir = project_path .. "/external_ai_export"
+    reaper.RecursiveCreateDirectory(export_dir, 0)
+    local exported_files = {}
+
+    for i, track in ipairs(tracks_to_process) do
+        local _, track_name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
+        self:_export_track_stems(track, track_name, export_dir)
+    end
+
     local tool_config = self:_get_tool_config(tool_type)
     self:_execute_external_tool(tool_config, exported_files)
-    
     return exported_files
 end
 
 function ExternalToolLauncher:_export_track_stems(track, track_name, export_dir)
-    -- Placeholder for track stem export
-    -- In real implementation, this would:
-    -- 1. Export track audio to temporary file
-    -- 2. Prepare for external processing
+    -- This helper reports a manual render target; it does not create audio.
     
-    local export_file = export_dir .. "\\" .. track_name .. "_export.wav"
-    msg("  Exporting: " .. track_name .. " -> " .. export_file)
-    
-    -- Simulate export
-    local success = true  -- reaper.CF_ExportMediaFile(track, export_file, "WAV", 0, 0, 44100, 0, 0, 0)
-    
-    return success and export_file or nil
+    local safe_name = (track_name ~= "" and track_name or "Unnamed Track"):gsub('[/\\:*?"<>|]', "_")
+    local export_file = export_dir .. "/" .. safe_name .. "_export.wav"
+    msg("  Manual render target: " .. safe_name .. " -> " .. export_file)
+    msg("    Render this track as a stem before running the external command.")
+    return nil
 end
 
 function ExternalToolLauncher:_get_tool_config(tool_type)
     local configs = {
         stem_separation = {
             executable = "python",
-            args = "-m demucs.separate",
-            working_dir = reaper.GetProjectPath(""),
+            args = "-m demucs",
+            working_dir = reaper.GetProjectPath(0),
             name = "Demucs Stem Separator"
         },
         mastering = {
@@ -370,13 +358,14 @@ function ExternalToolLauncher:_execute_external_tool(tool_config, files)
     msg("Launching external tool: " .. tool_config.name)
     msg("  Executable: " .. tool_config.executable)
     msg("  Arguments: " .. tool_config.args)
-    msg("  Files: " .. #files .. " files to process")
-    
-    -- In real implementation, use os.execute() or similar
+    msg("  Files currently rendered: " .. #files)
+    if #files == 0 then msg("  No audio was rendered automatically; render the targets above first.") end
+
+    -- External execution is intentionally manual so arguments and media can be reviewed.
     -- For now, just provide instructions
     msg("\nTo complete processing:")
     msg("1. Run: " .. tool_config.executable .. " " .. tool_config.args)
-    msg("2. Process exported files in: " .. reaper.GetProjectPath("") .. "\\external_ai_export")
+    msg("2. Process exported files in: " .. reaper.GetProjectPath(0) .. "/external_ai_export")
     msg("3. Import processed results back into REAPER")
 end
 
@@ -396,19 +385,17 @@ function AIHubController:new()
 end 
 
 function AIHubController:show_interface()
-    msg("=== REAPER AI CONTROL HUB ===")
-    msg("")
-    msg("Choose AI Processing Mode:")
-    msg("1. Plugin Bridge (Discover & use AI plugins)")
-    msg("2. ReWire Integration (Route to external DAW)")
-    msg("3. OmniBridge Integration (AudioMovers routing)")
-    msg("4. External Tool Launcher (Run external AI tools)")
-    msg("")
-    msg("Press 1-4 to select, or ESC to cancel")
-    
-    -- In real implementation, this would show a GUI
-    -- For now, run discovery by default
-    self:run_discovery_mode()
+    local menu = "REAPER AI Control Hub|" ..
+        "Inspect Master FX / Export Routing Notes|" ..
+        "ReWire Setup Notes|" ..
+        "OmniBridge Setup Notes|" ..
+        "External Processing Instructions"
+    gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
+    local choice = gfx.showmenu(menu)
+    if choice == 1 then self:run_discovery_mode()
+    elseif choice == 2 then self:run_rewire_mode()
+    elseif choice == 3 then self:run_omnibridge_mode()
+    elseif choice == 4 then self:run_external_tool_mode() end
 end
 
 function AIHubController:run_discovery_mode()
@@ -454,8 +441,6 @@ end
 function run_ai_hub()
     local controller = AIHubController:new()
     
-    -- For now, run discovery mode by default
-    -- In full implementation, this would show a GUI for mode selection
     controller:show_interface()
 end
 
@@ -464,3 +449,7 @@ _G.AIPluginBridge = AIPluginBridge
 _G.ExternalToolLauncher = ExternalToolLauncher
 _G.AIHubController = AIHubController
 _G.run_ai_hub = run_ai_hub
+
+-- Running the ReaScript opens the console-based hub. The globals above remain
+-- available to other scripts that want to reuse its helpers.
+run_ai_hub()

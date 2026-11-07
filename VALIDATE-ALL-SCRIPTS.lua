@@ -6,6 +6,7 @@
 -- Version 1.0
 
 local scripts_to_test = {
+  "VALIDATE-ALL-SCRIPTS.lua",
   "SGM_Professional_Session_Builder.lua",
   "rule-of-30-plugin-presets.lua",
   "scan-real-plugins.lua",

@@ -7,7 +7,7 @@
 
 -- Signal Chain Architecture with AI Enhancement
 
-SIGNAL_CHAIN_LIBRARY = {
+local SIGNAL_CHAIN_LIBRARY = {
   -- VOCAL PRODUCTION CHAINS
   vocal_chains = {
     -- Modern Pop Vocal Chain with AI Enhancement
@@ -485,7 +485,7 @@ function export_to_reaper()
     metadata = {
       author = "Scott Mills Audio Systems",
       created = os.date(),
-      compatibility = "REAPER 6.0+"
+      compatibility = "REAPER 7.0+"
     }
   }
 end

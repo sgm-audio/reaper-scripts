@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 class PluginFormat(Enum):
     VST2 = "VST"
@@ -120,7 +121,8 @@ class PluginDatabase:
                 quality_match REAL,
                 notes TEXT,
                 FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id),
-                FOREIGN KEY (alternative_id) REFERENCES plugins(plugin_id)
+                FOREIGN KEY (alternative_id) REFERENCES plugins(plugin_id),
+                UNIQUE(plugin_id, alternative_id)
             )
         ''')
         
@@ -148,7 +150,7 @@ class PluginDatabase:
                 name="ReaEQ",
                 manufacturer="Cockos",
                 version="*",
-                format=PluginFormat.JS,
+                format=PluginFormat.VST2,
                 category=PluginCategory.EQ,
                 windows_compatible=True,
                 mac_compatible=True,
@@ -258,10 +260,15 @@ class PluginDatabase:
                 plugin.notes
             ))
             
-            # Add alternatives
+            # Replace the relationship set atomically; repeated initialization
+            # must not accumulate duplicate alternatives in older databases.
+            cursor.execute(
+                "DELETE FROM plugin_alternatives WHERE plugin_id = ?",
+                (plugin.plugin_id,),
+            )
             for alt in plugin.alternatives:
                 cursor.execute('''
-                    INSERT OR REPLACE INTO plugin_alternatives 
+                    INSERT OR IGNORE INTO plugin_alternatives
                     VALUES (?, ?, ?, ?)
                 ''', (plugin.plugin_id, alt, 0.8, ""))
             
@@ -341,9 +348,67 @@ class PluginDatabase:
             automation_parameters=row[17],
             alternatives=[],  # Loaded separately
             website=row[18],
-            last_updated=datetime.fromisoformat(row[19]),
+            last_updated=(
+                row[19]
+                if isinstance(row[19], datetime)
+                else datetime.fromisoformat(row[19])
+            ),
             notes=row[20]
         )
+
+    def export_json(self, output_path: str):
+        """Export plugin metadata and alternative relationships to JSON."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            plugins = [dict(row) for row in conn.execute("SELECT * FROM plugins")]
+            alternatives = [
+                dict(row) for row in conn.execute("SELECT * FROM plugin_alternatives")
+            ]
+        with open(output_path, "w", encoding="utf-8") as output:
+            json.dump(
+                {"plugins": plugins, "alternatives": alternatives},
+                output,
+                indent=2,
+                default=str,
+            )
+
+    def import_json(self, input_path: str):
+        """Import data produced by :meth:`export_json`."""
+        with open(input_path, "r", encoding="utf-8") as source:
+            data = json.load(source)
+        if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
+            raise ValueError("Invalid plugin database export")
+        alternatives = {}
+        for relationship in data.get("alternatives", []):
+            alternatives.setdefault(relationship["plugin_id"], []).append(
+                relationship["alternative_id"]
+            )
+        for row in data["plugins"]:
+            plugin = PluginInfo(
+                plugin_id=row["plugin_id"],
+                name=row["name"],
+                manufacturer=row.get("manufacturer", ""),
+                version=row.get("version", ""),
+                format=PluginFormat(row["format"]),
+                category=PluginCategory(row["category"]),
+                windows_compatible=bool(row.get("windows_compatible", True)),
+                mac_compatible=bool(row.get("mac_compatible", True)),
+                linux_compatible=bool(row.get("linux_compatible", True)),
+                min_reaper_version=row.get("min_reaper_version", ""),
+                requires_license=bool(row.get("requires_license", True)),
+                is_free=bool(row.get("is_free", False)),
+                cpu_usage=row.get("cpu_usage", "unknown"),
+                latency=int(row.get("latency", 0)),
+                supports_oversampling=bool(row.get("supports_oversampling", False)),
+                preset_count=int(row.get("preset_count", 0)),
+                midi_learn=bool(row.get("midi_learn", False)),
+                automation_parameters=int(row.get("automation_parameters", 0)),
+                alternatives=alternatives.get(row["plugin_id"], []),
+                website=row.get("website", ""),
+                last_updated=datetime.fromisoformat(row["last_updated"]),
+                notes=row.get("notes", ""),
+            )
+            self.add_plugin(plugin)
 
 class PluginScanner:
     """Scan system for installed plugins"""
@@ -386,13 +451,19 @@ class PluginScanner:
                 f"{home}/.vst3"
             ]
         
-        # Add REAPER paths
+        # Add installation and per-user REAPER resource paths.
         reaper_path = self._find_reaper_path()
         if reaper_path:
             paths.append(os.path.join(reaper_path, "Plugins"))
             paths.append(os.path.join(reaper_path, "Effects"))
-        
-        return [p for p in paths if os.path.exists(p)]
+        if self.system == "Windows" and os.getenv("APPDATA"):
+            paths.append(os.path.join(os.environ["APPDATA"], "REAPER", "Effects"))
+        elif self.system == "Darwin":
+            paths.append(os.path.expanduser("~/Library/Application Support/REAPER/Effects"))
+        elif self.system == "Linux":
+            paths.append(os.path.expanduser("~/.config/REAPER/Effects"))
+
+        return sorted({p for p in paths if os.path.isdir(p)})
     
     def _find_reaper_path(self) -> Optional[str]:
         """Find REAPER installation path"""
@@ -404,7 +475,10 @@ class PluginScanner:
         elif self.system == "Darwin":
             paths = ["/Applications/REAPER.app/Contents/Resources"]
         else:
-            paths = ["/opt/REAPER", "/usr/local/bin/reaper"]
+            paths = [
+                "/opt/REAPER",
+                os.path.expanduser("~/.config/REAPER"),
+            ]
         
         for path in paths:
             if os.path.exists(path):
@@ -412,31 +486,41 @@ class PluginScanner:
         return None
     
     def scan_plugins(self) -> Dict[str, List[str]]:
-        """Scan for installed plugins"""
+        """Scan files and plugin bundles without descending into bundle contents."""
         plugins = {
-            'vst2': [],
-            'vst3': [],
-            'au': [],
-            'js': []
+            'vst2': [], 'vst3': [], 'au': [], 'js': [], 'clap': [], 'lv2': []
         }
-        
+        bundle_formats = {
+            '.vst': 'vst2', '.vst3': 'vst3', '.component': 'au', '.lv2': 'lv2'
+        }
+        file_formats = {
+            '.dll': 'vst2', '.vst': 'vst2', '.so': 'vst2',
+            '.vst3': 'vst3', '.component': 'au', '.clap': 'clap',
+            '.js': 'js', '.jsfx': 'js', '.lv2': 'lv2'
+        }
+
         for path in self.plugin_paths:
-            if not os.path.exists(path):
+            if not os.path.isdir(path):
                 continue
-            
             for root, dirs, files in os.walk(path):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    
-                    if file.endswith('.dll') or file.endswith('.vst'):
-                        plugins['vst2'].append(full_path)
-                    elif file.endswith('.vst3'):
-                        plugins['vst3'].append(full_path)
-                    elif file.endswith('.component'):
-                        plugins['au'].append(full_path)
-                    elif file.endswith('.js'):
-                        plugins['js'].append(full_path)
-        
+                # VST3/AU/LV2 (and VST2 on macOS) are directories, not files.
+                for dirname in list(dirs):
+                    format_name = bundle_formats.get(os.path.splitext(dirname)[1].lower())
+                    if format_name:
+                        plugins[format_name].append(os.path.join(root, dirname))
+                        dirs.remove(dirname)
+                for filename in files:
+                    extension = os.path.splitext(filename)[1].lower()
+                    format_name = file_formats.get(extension)
+                    if format_name:
+                        plugins[format_name].append(os.path.join(root, filename))
+                    elif (not extension and 'Effects' in Path(path).parts
+                          and not filename.endswith('.jsfx-inc')):
+                        # Native JSFX files commonly have no extension.
+                        plugins['js'].append(os.path.join(root, filename))
+
+        for format_name, paths in plugins.items():
+            plugins[format_name] = sorted(set(paths))
         self.installed_plugins = plugins
         return plugins
     
@@ -474,7 +558,26 @@ class CompatibilityChecker:
         self.db = PluginDatabase()
         self.scanner = PluginScanner()
         self.compatibility_report = {}
-    
+
+    @staticmethod
+    def _normalize_plugin_name(name: str) -> str:
+        """Normalize RPP descriptors and filenames for conservative matching."""
+        normalized = os.path.basename(name).strip()
+        normalized = re.sub(
+            r"^(?:VST3?|VSTi|AU|CLAP|JS):\s*", "", normalized, flags=re.IGNORECASE
+        )
+        normalized = os.path.splitext(normalized)[0]
+        # RPP display names commonly end with the vendor in parentheses.
+        normalized = re.sub(r"\s*\([^()]*\)\s*$", "", normalized)
+        return re.sub(r"[^a-z0-9]+", "", normalized.lower())
+
+    def _is_installed(self, plugin_name: str, installed_names: List[str]) -> bool:
+        target = self._normalize_plugin_name(plugin_name)
+        return bool(target) and any(
+            self._normalize_plugin_name(installed) == target
+            for installed in installed_names
+        )
+
     def check_template_compatibility(self, template_path: str) -> Dict:
         """Check all plugins in a template for compatibility"""
         report = {
@@ -484,9 +587,15 @@ class CompatibilityChecker:
             'incompatible_plugins': [],
             'alternatives_available': {},
             'warnings': [],
+            'errors': [],
             'score': 100.0
         }
-        
+        if not os.path.isfile(template_path):
+            report['errors'].append(f'Template not found: {template_path}')
+            report['score'] = 0.0
+            self.compatibility_report = report
+            return report
+
         # Parse template file
         plugins_used = self._parse_template_plugins(template_path)
         report['total_plugins'] = len(plugins_used)
@@ -498,7 +607,11 @@ class CompatibilityChecker:
         # Check each plugin
         for plugin_name in plugins_used:
             plugin_info = self.db.find_plugin(plugin_name)
-            
+            is_installed = self._is_installed(plugin_name, installed_names) or (
+                plugin_info is not None
+                and self._is_installed(plugin_info.name, installed_names)
+            )
+
             if plugin_info:
                 # Check OS compatibility
                 if not self._is_compatible_with_os(plugin_info):
@@ -509,7 +622,7 @@ class CompatibilityChecker:
                     report['score'] -= 10
                 
                 # Check if installed
-                if plugin_name not in installed_names:
+                if not is_installed:
                     report['missing_plugins'].append(plugin_name)
                     report['score'] -= 5
                     
@@ -527,12 +640,12 @@ class CompatibilityChecker:
                         f'{plugin_name} requires a valid license'
                     )
             else:
-                # Unknown plugin
-                report['missing_plugins'].append(plugin_name)
                 report['warnings'].append(
-                    f'{plugin_name} not found in database'
+                    f'{plugin_name} not found in database; compatibility unverified'
                 )
-                report['score'] -= 5
+                if not is_installed:
+                    report['missing_plugins'].append(plugin_name)
+                    report['score'] -= 5
         
         report['score'] = max(0, report['score'])
         self.compatibility_report = report
@@ -545,24 +658,23 @@ class CompatibilityChecker:
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                
-                # Find VST plugins
-                vst_pattern = r'<VST "(.*?)"'
-                plugins.extend(re.findall(vst_pattern, content))
-                
-                # Find JS plugins  
-                js_pattern = r'<JS "(.*?)"'
-                plugins.extend(re.findall(js_pattern, content))
-                
-                # Find AU plugins
-                au_pattern = r'<AU "(.*?)"'
-                plugins.extend(re.findall(au_pattern, content))
-                
-        except Exception as e:
+            descriptors = re.findall(
+                r'<(?:VST|JS|AU|CLAP)\s+\"([^\"]+)\"', content,
+                flags=re.IGNORECASE,
+            )
+            for descriptor in descriptors:
+                name = re.sub(
+                    r"^(?:VST3?|VSTi|AU|CLAP|JS):\s*", "", descriptor,
+                    flags=re.IGNORECASE,
+                ).strip()
+                name = re.sub(r"\s*\([^()]*\)\s*$", "", name).strip()
+                if name:
+                    plugins.append(name)
+        except (OSError, UnicodeError) as e:
             print(f"Error parsing template: {e}")
-        
-        return list(set(plugins))  # Remove duplicates
-    
+
+        return sorted(set(plugins))  # Remove duplicates
+
     def _extract_plugin_names(self, installed_plugins: Dict) -> List[str]:
         """Extract plugin names from installed paths"""
         names = []
@@ -604,7 +716,13 @@ class CompatibilityChecker:
         lines.append(f"Total Plugins: {report['total_plugins']}")
         lines.append(f"Compatibility Score: {report['score']:.1f}%")
         lines.append("")
-        
+
+        if report.get('errors'):
+            lines.append("ERRORS:")
+            for error in report['errors']:
+                lines.append(f"  ✗ {error}")
+            lines.append("")
+
         if report['missing_plugins']:
             lines.append("MISSING PLUGINS:")
             for plugin in report['missing_plugins']:
@@ -681,10 +799,9 @@ class PluginPresetManager:
         if source_info.category != target_info.category:
             return None
         
-        # Implement conversion logic based on plugin types
-        # This is highly plugin-specific
-        
-        return preset_data  # Placeholder
+        # Preset bytes are plugin-specific. Returning them unchanged would
+        # falsely claim a conversion and could corrupt the target preset.
+        return None
 
 # Command-line interface
 def main():
@@ -710,10 +827,14 @@ def main():
     
     args = parser.parse_args()
     
+    if not args.command:
+        parser.print_help()
+        return 0
+
     if args.command == 'check':
         checker = CompatibilityChecker()
-        checker.check_template_compatibility(args.template)
-        
+        report = checker.check_template_compatibility(args.template)
+
         print(checker.generate_compatibility_report())
         
         if args.suggest:
@@ -721,7 +842,8 @@ def main():
             replacements = checker.suggest_replacements()
             for original, replacement in replacements.items():
                 print(f"  {original} → {replacement}")
-    
+        return 1 if report.get('errors') else 0
+
     elif args.command == 'scan':
         scanner = PluginScanner()
         plugins = scanner.scan_plugins()
@@ -741,17 +863,17 @@ def main():
             print(f"\nScan results saved to {args.save}")
     
     elif args.command == 'db':
-        PluginDatabase()
-        
+        database = PluginDatabase()
         if args.export:
-            # Export database to JSON
-            # Implementation needed
+            database.export_json(args.export)
             print(f"Database exported to {args.export}")
-        
         elif args.import_file:
-            # Import from JSON
-            # Implementation needed
+            database.import_json(args.import_file)
             print(f"Database imported from {args.import_file}")
+        else:
+            db_parser.print_help()
+
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

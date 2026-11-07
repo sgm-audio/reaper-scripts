@@ -14,19 +14,25 @@ if reaper.GetOS() == "Win32" or reaper.GetOS() == "Win64" then
     "C:\\Program Files\\VSTPlugins",
     "C:\\Program Files\\Steinberg\\VSTPlugins",
     "C:\\Program Files\\Common Files\\VST3",
+    "C:\\Program Files\\Common Files\\CLAP",
     "C:\\Program Files (x86)\\VSTPlugins"
   }
-elseif reaper.GetOS() == "OSX64" then
+elseif reaper.GetOS():match("^OSX") then
   SCAN_PATHS = {
     "/Library/Audio/Plug-Ins/VST",
     "/Library/Audio/Plug-Ins/VST3",
-    "/Library/Audio/Plug-Ins/Components"
+    "/Library/Audio/Plug-Ins/Components",
+    "/Library/Audio/Plug-Ins/CLAP",
+    "/Library/Audio/Plug-Ins/LV2"
   }
   -- Per-user paths only exist when HOME is set
   local home = os.getenv("HOME")
   if home then
     table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST")
     table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST3")
+    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/Components")
+    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/CLAP")
+    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/LV2")
   end
 else
   -- Linux
@@ -36,19 +42,39 @@ else
     "/usr/lib/vst3",
     "/usr/local/lib/vst",
     "/usr/local/lib/lxvst",
-    "/usr/local/lib/vst3"
+    "/usr/local/lib/vst3",
+    "/usr/lib/clap",
+    "/usr/lib/lv2",
+    "/usr/local/lib/clap",
+    "/usr/local/lib/lv2"
   }
   local home = os.getenv("HOME")
   if home then
     table.insert(SCAN_PATHS, home .. "/.vst")
     table.insert(SCAN_PATHS, home .. "/.vst3")
     table.insert(SCAN_PATHS, home .. "/.lxvst")
+    table.insert(SCAN_PATHS, home .. "/.clap")
+    table.insert(SCAN_PATHS, home .. "/.lv2")
   end
 end
 
 -- ===================================
 -- PLUGIN DATABASE
 -- ===================================
+
+local function json_string(value)
+  local escaped = tostring(value or ""):gsub("\\", "\\\\"):gsub('"', '\\"')
+  escaped = escaped:gsub("%c", function(char)
+    local replacements = {["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t"}
+    return replacements[char] or string.format("\\u%04X", string.byte(char))
+  end)
+  return '"' .. escaped .. '"'
+end
+
+local function json_unescape(value)
+  local escapes = {['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t"}
+  return (value:gsub("\\(.)", function(char) return escapes[char] or char end))
+end
 
 local PluginDB = {}
 
@@ -80,48 +106,50 @@ end
 function PluginDB:save()
   local file = io.open(PLUGIN_DB_FILE, "w")
   if file then
-    file:write(self:toJSON())
+    local ok = file:write(self:toJSON())
     file:close()
-    return true
+    return ok ~= nil
   end
   return false
 end
 
 function PluginDB:parseJSON(str)
-  -- Simplified JSON parser for plugin database
-  -- In production, use a proper JSON library
-  return {plugins = {}, last_scan = os.time()}
+  -- Parse the flat schema written by toJSON. Unknown/corrupt data is rejected
+  -- rather than silently replacing a saved database with an empty one.
+  if type(str) ~= "string" or not str:match('"plugins"%s*:%s*%[') then return nil end
+  local db = {plugins = {}, last_scan = tonumber(str:match('"last_scan"%s*:%s*(%d+)')) or 0}
+  for object in str:gmatch('{%s*\n%s*"name".-\n    }') do
+    local fields = {}
+    for line in object:gmatch("[^\r\n]+") do
+      local key, value = line:match('^%s*"([^"]+)"%s*:%s*"(.*)"%s*,?%s*$')
+      if key then fields[key] = json_unescape(value) end
+    end
+    if fields.name and fields.path and fields.format then
+      fields.param_count = tonumber(object:match('"param_count"%s*:%s*(%d+)')) or 0
+      table.insert(db.plugins, fields)
+    end
+  end
+  return db
 end
 
 function PluginDB:toJSON()
-  local json = "{\n"
-  json = json .. '  "last_scan": ' .. os.time() .. ',\n'
-  json = json .. '  "plugins": [\n'
-
   local plugin_entries = {}
   for _, plugin in ipairs(self.plugins) do
-    local entry = string.format([[
-    {
-      "name": "%s",
-      "path": "%s",
-      "format": "%s",
-      "vendor": "%s",
-      "category": "%s",
-      "param_count": %d
-    }]],
-      plugin.name,
-      plugin.path:gsub("\\", "\\\\"),
-      plugin.format,
-      plugin.vendor or "Unknown",
-      plugin.category or "Effect",
-      plugin.param_count or 0
-    )
+    local entry = table.concat({
+      "    {",
+      '      "name": ' .. json_string(plugin.name) .. ",",
+      '      "path": ' .. json_string(plugin.path) .. ",",
+      '      "format": ' .. json_string(plugin.format) .. ",",
+      '      "vendor": ' .. json_string(plugin.vendor or "Unknown") .. ",",
+      '      "category": ' .. json_string(plugin.category or "Effect") .. ",",
+      '      "param_count": ' .. tostring(tonumber(plugin.param_count) or 0),
+      "    }",
+    }, "\n")
     table.insert(plugin_entries, entry)
   end
-
-  json = json .. table.concat(plugin_entries, ",\n")
-  json = json .. "\n  ]\n}"
-  return json
+  return "{\n" ..
+    '  "last_scan": ' .. tostring(tonumber(self.last_scan) or os.time()) .. ",\n" ..
+    '  "plugins": [\n' .. table.concat(plugin_entries, ",\n") .. "\n  ]\n}"
 end
 
 function PluginDB:addPlugin(plugin_info)
@@ -130,7 +158,7 @@ end
 
 function PluginDB:findByName(name)
   for _, plugin in ipairs(self.plugins) do
-    if plugin.name:lower():find(name:lower()) then
+    if plugin.name:lower():find(name:lower(), 1, true) then
       return plugin
     end
   end
@@ -168,10 +196,7 @@ end
 function PluginScanner:scanDirectory(path)
   local plugins_found = {}
 
-  if not reaper.file_exists(path) then
-    return plugins_found
-  end
-
+  -- Enumerating a missing directory simply returns no files in REAPER.
   -- Recursively scan directory
   local files = self:getFilesInDirectory(path)
 
@@ -190,41 +215,38 @@ end
 
 function PluginScanner:getFilesInDirectory(path)
   local files = {}
-  local extensions = {".dll", ".vst", ".vst3", ".component"}
+  local formats = {[".dll"] = true, [".vst"] = true, [".vst3"] = true,
+    [".component"] = true, [".clap"] = true, [".lv2"] = true}
+  local bundles = {[".vst"] = true, [".vst3"] = true, [".component"] = true, [".lv2"] = true}
 
-  -- Use REAPER's file enumeration
   local i = 0
-  repeat
+  while true do
     local filename = reaper.EnumerateFiles(path, i)
-    if filename then
-      for _, ext in ipairs(extensions) do
-        if filename:sub(-#ext) == ext then
-          table.insert(files, path .. "/" .. filename)
-        end
-      end
-    end
+    if not filename then break end
+    local ext = filename:lower():match("(%.[^%.]+)$")
+    if ext and formats[ext] then table.insert(files, path .. "/" .. filename) end
     i = i + 1
-  until not filename
+  end
 
-  -- Enumerate subdirectories
   i = 0
-  repeat
+  while true do
     local dirname = reaper.EnumerateSubdirectories(path, i)
-    if dirname then
-      local subfiles = self:getFilesInDirectory(path .. "/" .. dirname)
-      for _, file in ipairs(subfiles) do
-        table.insert(files, file)
-      end
+    if not dirname then break end
+    local full_path = path .. "/" .. dirname
+    local ext = dirname:lower():match("(%.[^%.]+)$")
+    if ext and bundles[ext] then
+      table.insert(files, full_path)
+    else
+      for _, file in ipairs(self:getFilesInDirectory(full_path)) do table.insert(files, file) end
     end
     i = i + 1
-  until not dirname
-
+  end
   return files
 end
 
 function PluginScanner:analyzePlugin(file_path)
   local filename = file_path:match("([^/\\]+)$")
-  local ext = filename:match("%.([^%.]+)$")
+  local ext = (filename:match("%.([^%.]+)$") or ""):lower()
 
   local format = "Unknown"
   if ext == "dll" or ext == "vst" then
@@ -233,6 +255,10 @@ function PluginScanner:analyzePlugin(file_path)
     format = "VST3"
   elseif ext == "component" then
     format = "AU"
+  elseif ext == "clap" then
+    format = "CLAP"
+  elseif ext == "lv2" then
+    format = "LV2"
   end
 
   -- Extract plugin name (remove extension and common prefixes)
@@ -258,7 +284,7 @@ function PluginScanner:detectVendor(path)
   }
 
   for _, vendor in ipairs(vendors) do
-    if path:lower():find(vendor:lower()) then
+    if path:lower():find(vendor:lower(), 1, true) then
       return vendor
     end
   end
@@ -356,7 +382,8 @@ function PluginInstance:getParamFormatted(param_index)
 end
 
 function PluginInstance:getPresetCount()
-  return reaper.TrackFX_GetPresetIndex(self.track, self.fx_index)
+  local _, preset_count = reaper.TrackFX_GetPresetIndex(self.track, self.fx_index)
+  return preset_count or 0
 end
 
 function PluginInstance:loadPreset(preset_index)
@@ -384,8 +411,9 @@ function PluginInstance:remove()
 end
 
 function PluginInstance:getStateChunk()
-  local _, chunk = reaper.TrackFX_GetNamedConfigParm(self.track, self.fx_index, "")
-  return chunk
+  -- VST state chunks are exposed under this named parameter by REAPER.
+  local ok, chunk = reaper.TrackFX_GetNamedConfigParm(self.track, self.fx_index, "vst_chunk")
+  return ok and chunk or nil
 end
 
 function PluginInstance:cacheAllParams()
@@ -502,25 +530,23 @@ function listAllPluginsOnTrack()
 end
 
 function automateSelectedPlugin()
-  local track = reaper.GetSelectedTrack(0, 0)
-  if not track then
-    reaper.ShowMessageBox("No track selected", "Error", 0)
-    return
+  local touched, track_number, fx_index, param_index = reaper.GetLastTouchedFX()
+  if not touched or not fx_index or fx_index < 0 or not param_index then
+    reaper.ShowMessageBox("No plugin parameter touched", "Error", 0)
+    return false
   end
-
-  -- Get last touched FX
-  local _, _, fx_index = reaper.GetLastTouchedFX()
-  if fx_index < 0 then
-    reaper.ShowMessageBox("No plugin touched", "Error", 0)
-    return
+  local track = track_number == 0 and reaper.GetMasterTrack(0) or reaper.GetTrack(0, track_number - 1)
+  if not track then
+    reaper.ShowMessageBox("The last touched track no longer exists", "Error", 0)
+    return false
   end
 
   local plugin = PluginInstance:new(track, fx_index)
   local automation = PluginAutomation:new(plugin)
-
-  -- Automate first parameter as example
-  automation:createSweep(0, 0.0, 1.0, 4.0, "exponential")
-  reaper.ShowMessageBox("Automation created!", "Success", 0)
+  local ok = automation:createSweep(param_index, 0.0, 1.0, 4.0, "exponential")
+  reaper.ShowMessageBox(ok and "Automation created!" or "Could not create the parameter envelope",
+    ok and "Success" or "Error", 0)
+  return ok
 end
 
 -- ===================================
@@ -529,10 +555,9 @@ end
 
 function showMenu()
   local menu = "Plugin Manager|"
-  menu = menu .. "#Scan All Plugins|"
+  menu = menu .. "Scan All Plugins|"
   menu = menu .. "List Plugins on Selected Track|"
   menu = menu .. "Automate Last Touched Parameter|"
-  menu = menu .. "|"
   menu = menu .. "Export Plugin Database"
 
   gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
@@ -550,6 +575,13 @@ function showMenu()
     reaper.ShowMessageBox("Database saved to:\n" .. PLUGIN_DB_FILE, "Success", 0)
   end
 end
+
+_G.SGMPluginWrapper = {
+  PluginDB = PluginDB,
+  PluginScanner = PluginScanner,
+  PluginInstance = PluginInstance,
+  PluginAutomation = PluginAutomation,
+}
 
 -- Run
 showMenu()

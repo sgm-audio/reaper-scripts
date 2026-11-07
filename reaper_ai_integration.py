@@ -1,6 +1,10 @@
 #!/bin/python
 
-import aaf2
+try:
+    import aaf2
+except ImportError:
+    aaf2 = None
+
 import os
 import sys
 import wave
@@ -8,7 +12,9 @@ import urllib.parse
 import urllib.request
 import json
 
-have_reaper = True  
+# REAPER injects RPR_* functions into ReaScript's Python globals. They are
+# absent when this module is imported by standalone tools or tests.
+have_reaper = "RPR_GetProjectPath" in globals()
 
 try:
     import tkinter
@@ -53,9 +59,11 @@ class ReaperInterface:
         RPR_SetMediaTrackInfo_Value(track, "D_VOL", volume)
 
     def set_track_volume_envelope(self, track, volume_data):
-        RPR_SetOnlyTrackSelected(track)
-        RPR_Main_OnCommand(40406, 0)  # ReaSlang for "toggle volume envelope visible"
         envelope = RPR_GetTrackEnvelopeByName(track, "Volume")
+        if not envelope:
+            RPR_SetOnlyTrackSelected(track)
+            RPR_Main_OnCommand(40406, 0)  # Show volume envelope.
+            envelope = RPR_GetTrackEnvelopeByName(track, "Volume")
         for point in volume_data:
             value = RPR_ScaleToEnvelopeMode(1, point["value"])
             RPR_InsertEnvelopePoint(envelope, point["time"], value, 0, 0.0, False, True)
@@ -65,9 +73,11 @@ class ReaperInterface:
         RPR_SetMediaTrackInfo_Value(track, "D_PAN", panning)
 
     def set_track_panning_envelope(self, track, panning_data):
-        RPR_SetOnlyTrackSelected(track)
-        RPR_Main_OnCommand(40407, 0)  # Toggle pan envelope visible
         envelope = RPR_GetTrackEnvelopeByName(track, "Pan")
+        if not envelope:
+            RPR_SetOnlyTrackSelected(track)
+            RPR_Main_OnCommand(40407, 0)  # Show pan envelope.
+            envelope = RPR_GetTrackEnvelopeByName(track, "Pan")
         for point in panning_data:
             RPR_InsertEnvelopePoint(envelope, point["time"], point["value"], 0, 0.0, False, True)
         RPR_Envelope_SortPoints(envelope)
@@ -153,6 +163,9 @@ class AAFInterface:
         self.essence_data = {}
 
     def open(self, filename):
+        if aaf2 is None:
+            log("AAF support requires the 'pyaaf2' package.", ERROR)
+            return False
         try:
             self.aaf = aaf2.open(filename, "r")
         except Exception:
@@ -165,6 +178,12 @@ class AAFInterface:
         self.aaf_directory = os.path.abspath(os.path.dirname(filename))
         self.essence_data = {}
         return True
+
+    def close(self):
+        """Close the current AAF and release its file handles."""
+        if self.aaf is not None:
+            self.aaf.close()
+            self.aaf = None
 
     def build_wav(self, fname, data, depth=16, rate=48000, channels=1):
         with wave.open(fname, "wb") as f:
@@ -235,18 +254,19 @@ class AAFInterface:
         for master_mob in self.aaf.content.mastermobs():
             self.essence_data[master_mob.name] = {}
             for slot in master_mob.slots:
-
+                source_mob = None
                 if isinstance(slot.segment, aaf2.components.Sequence):
-                    source_mob = None
                     for component in slot.segment.components:
                         if isinstance(component, aaf2.components.SourceClip):
                             source_mob = component.mob
                             break
-                    else:
-                        self.essence_data[master_mob.name][slot.slot_id] = ""
-                        log("Cannot find essence for %s slot %d" % (master_mob.name, slot.slot_id), WARNING)
                 elif isinstance(slot.segment, aaf2.components.SourceClip):
                     source_mob = slot.segment.mob
+
+                if source_mob is None:
+                    self.essence_data[master_mob.name][slot.slot_id] = ""
+                    log("Cannot find essence for %s slot %d" % (master_mob.name, slot.slot_id), WARNING)
+                    continue
 
                 if slot.segment.media_kind == "Picture":
                     # Video files cannot be embedded in the AAF.
@@ -271,8 +291,8 @@ class AAFInterface:
         count = 0
         for master_mob in self.aaf.content.mastermobs():
             for slot in master_mob.slots:
+                source_mob = None
                 if isinstance(slot.segment, aaf2.components.Sequence):
-                    source_mob = None
                     for component in slot.segment.components:
                         if isinstance(component, aaf2.components.SourceClip):
                             source_mob = component.mob
@@ -281,6 +301,8 @@ class AAFInterface:
                         continue
                 elif isinstance(slot.segment, aaf2.components.SourceClip):
                     source_mob = slot.segment.mob
+                if source_mob is None:
+                    continue
                 if slot.segment.media_kind == "Sound" and source_mob.essence:
                     count += 1
         return count
@@ -612,7 +634,8 @@ class UserInteraction:
         while True:
             try:
                 composition_id = int(input("> "))
-                composition_list[composition_id]
+                if not 0 <= composition_id < len(composition_list):
+                    raise IndexError("Composition index out of range")
                 break
             except Exception:
                 print("Invalid input.")
@@ -677,45 +700,68 @@ def import_aaf():
 
     if have_reaper:
         filename = reaper_interface.select_aaf()
-        if filename is None: return
+        if filename is None:
+            return False
         target = reaper_interface.get_project_directory()
+        if not target:
+            log("Save the REAPER project before importing an AAF.", ERROR)
+            return False
     else:
         if len(sys.argv) < 2:
             log("No input file provided.", ERROR)
-            return
+            return False
         filename = sys.argv[1]
-        target = "sources"
-        if not os.path.exists(target):
-            os.mkdir(target)
+        target = os.path.join(os.path.dirname(os.path.abspath(filename)), "sources")
         log_level = NOTICE
 
-    if not aaf_interface.open(filename): return
-    log("geting data from %s..." % filename)
-    meta = aaf_interface.get_aaf_metadata()
-    log("AAF created on %s with %s %s version %s using %s" % 
-        (str(meta["date"]), meta["company"], meta["product"], meta["version"], meta["platform"])
-    )
+    if aaf2 is None:
+        log("AAF support requires the 'pyaaf2' package.", ERROR)
+        return False
+    os.makedirs(target, exist_ok=True)
+    if not aaf_interface.open(filename):
+        return False
 
-    if have_tk:
-        def action(update):
-            aaf_interface.extract_essence(target, update)
-        count = aaf_interface.get_embedded_essence_count()
-        UserInteraction.show_progressbar(count, action)
-    else:
-        aaf_interface.extract_essence(target, None)
+    try:
+        log("Getting data from %s..." % filename)
+        meta = aaf_interface.get_aaf_metadata()
+        if meta:
+            log("AAF created on %s with %s %s version %s using %s" %
+                (meta.get("date", "unknown date"), meta.get("company", "unknown"),
+                 meta.get("product", "unknown"), meta.get("version", "unknown"),
+                 meta.get("platform", "unknown"))
+            )
 
-    composition_list = aaf_interface.get_composition_list()
-    composition_id = 0
-    if len(composition_list) > 1:
-        composition_id = UserInteraction.get_composition(composition_list)
-    composition = aaf_interface.get_composition(composition_id)
+        if have_reaper and have_tk:
+            def action(update):
+                aaf_interface.extract_essence(target, update)
+            count = aaf_interface.get_embedded_essence_count()
+            try:
+                UserInteraction.show_progressbar(count, action)
+            except tkinter.TclError:
+                # REAPER can run on a headless session even when tkinter exists.
+                aaf_interface.extract_essence(target, None)
+        else:
+            aaf_interface.extract_essence(target, None)
 
-    if have_reaper:
-        reaper_interface.build_project(composition)
-    else:
-        print(json.dumps(composition))
+        composition_list = aaf_interface.get_composition_list()
+        if not composition_list:
+            log("AAF contains no compositions.", ERROR)
+            return False
+        composition_id = 0
+        if len(composition_list) > 1:
+            composition_id = UserInteraction.get_composition(composition_list)
+        composition = aaf_interface.get_composition(composition_id)
+
+        if have_reaper:
+            reaper_interface.build_project(composition)
+        else:
+            print(json.dumps(composition))
+        return True
+    finally:
+        aaf_interface.close()
 
 if __name__ == "__main__":
-    # sys.exit() or exit() would crash the script, so instead
-    # we're using `return` within a main function
-    import_aaf()
+    success = import_aaf()
+    # Raising SystemExit is unsafe in some embedded REAPER Python versions.
+    if not have_reaper and not success:
+        sys.exit(1)

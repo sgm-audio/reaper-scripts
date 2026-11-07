@@ -1,5 +1,5 @@
 -- VST3/CLAP Plugin Development Blueprint
--- @description VST3/CLAP plugin development scaffolding helpers
+-- @description Plugin development guide and confirmed directory-only scaffold (not a buildable plugin generator)
 -- @author Scott Mills
 -- @version 1.0
 -- Comprehensive guide for building professional AI audio plugins
@@ -18,7 +18,7 @@ SOLUTION: Build proper plugins that handle complexity externally
 WHY JUCE:
 ✓ Industry standard with thousands of professional plugins
 ✓ Cross-platform (Windows, macOS, Linux)  
-✓ Handles all plugin formats (VST3, AU, AAX, CLAP)
+✓ Supports major formats (AAX requires Avid's SDK; CLAP requires a compatible extension)
 ✓ Built-in advanced GUI framework
 ✓ Excellent ML integration capabilities
 ✓ Professional audio processing tools
@@ -413,105 +413,67 @@ function show_plugin_development_guide()
 end
 
 function create_development_project()
-    reaper.ShowConsoleMsg("=== CREATING DEVELOPMENT PROJECT ===")
-    
+    reaper.ShowConsoleMsg("=== CREATING DEVELOPMENT DIRECTORY SCAFFOLD ===")
+
     local project_name = "SGM_AI_Plugin_Suite"
-    local project_path = reaper.GetProjectPath("") .. "\\" .. project_name
-    
-    reaper.ShowConsoleMsg("Creating project structure at: " .. project_path)
-    
-    -- In real implementation, this would create the complete project structure
-    -- with all files, CMakeLists.txt, etc.
-    
+    local parent_path = reaper.GetProjectPath(0)
+    if parent_path == "" then
+        reaper.ShowMessageBox("Save the REAPER project before creating a development scaffold.", "Development Scaffold", 0)
+        return false
+    end
+    local project_path = parent_path .. "/" .. project_name
+
     local directories = {
-        project_name,
-        project_name .. "\\Source",
-        project_name .. "\\Source\\AI",
-        project_name .. "\\Source\\GUI", 
-        project_name .. "\\Source\\Parameters",
-        project_name .. "\\Source\\Utils",
-        project_name .. "\\Resources",
-        project_name .. "\\Resources\\Models",
-        project_name .. "\\Resources\\Presets",
-        project_name .. "\\Docs",
-        project_name .. "\\Tests",
-        project_name .. "\\Build"
+        "", "/Source", "/Source/AI", "/Source/GUI", "/Source/Parameters",
+        "/Source/Utils", "/Resources", "/Resources/Models", "/Resources/Presets",
+        "/Docs", "/Tests", "/Build",
     }
-    
-    for i, dir in ipairs(directories) do
-        reaper.ShowConsoleMsg("  Creating: " .. dir)
-        -- reaper.RecursiveCreateDirectory(dir, 0)
+    for _, suffix in ipairs(directories) do
+        reaper.RecursiveCreateDirectory(project_path .. suffix, 0)
     end
-    
-    -- Create main files
-    local files_to_create = {
-        "CMakeLists.txt",
-        "README.md",
-        ".gitignore"
-    }
-    
-    for i, file in ipairs(files_to_create) do
-        local file_path = project_path .. "\\" .. file
-        reaper.ShowConsoleMsg("  Creating: " .. file_path)
-        
-        local f = io.open(file_path, "w")
-        if f then
-            if file == "README.md" then
-                f:write("# SGM AI Plugin Suite\n\n")
-                f:write("Professional AI audio processing plugins\n")
-                f:write("Built with JUCE for VST3/CLAP/AU/AAX\n\n")
-                f:write("## Installation\n")
-                f:write("1. Install VST3/CLAP to your DAW's plugins folder\n")
-                f:write("2. Scan for new plugins\n")
-                f:write("3. Load SGM AI Suite\n")
-                f:write("\n## Features\n")
-                f:write("- Real-time stem separation\n")
-                f:write("- AI-powered mastering\n")
-                f:write("- Advanced audio analysis\n")
-                f:write("- Professional GUI\n")
-                f:write("- Parameter automation\n")
-                f:write("- Preset management\n")
-            elseif file == "CMakeLists.txt" then
-                f:write("cmake_minimum_required(VERSION 3.20)\n")
-                f:write("project(SGMAIPluginSuite VERSION 1.0.0)\n\n")
-                f:write("# Find JUCE\n")
-                f:write("find_package(JUCE REQUIRED)\n\n")
-                f:write("# Add JUCE modules\n")
-                f:write("juce_add_plugin(PLUGIN_NAME\n")
-                f:write("                PRODUCT_NAME \"SGM AI Suite\"\n")
-                f:write("                FORMATS VST3 CLAP AU Standalone\n")
-                f:write("                PLUGIN_MANUFACTURER_CODE SgmA\n")
-                f:write("                IS_SYNTH FALSE\n")
-                f:write("                NEEDS_MIDI FALSE\n")
-                f:write("                IS_MIDI_EFFECT FALSE\n")
-                f:write("                NEEDS_PLAYBACK FALSE\n")
-                f:write("                IS_AUX FALSE\n")
-                f:write("                COPY_PLUGIN_AFTER_BUILD TRUE)\n\n")
-                f:write("target_link_libraries(SGMAIPluginSuite PRIVATE\n")
-                f:write("    ${JUCE_LIBRARIES}\n")
-                f:write("    onnxruntime\n")
-                f:write("    fftw3\n")
-                f:write(")\n")
-            end
-            f:close()
-        end
+
+    local readme_path = project_path .. "/README.md"
+    local existing = io.open(readme_path, "r")
+    if existing then
+        existing:close()
+        reaper.ShowMessageBox("Scaffold already exists; no files were overwritten:\n" .. project_path, "Development Scaffold", 0)
+        return false
     end
-    
-    reaper.ShowConsoleMsg("\n✅ Project structure created!")
-    reaper.ShowConsoleMsg("🚀 Ready for development!")
-    reaper.ShowConsoleMsg("")
-    reaper.ShowConsoleMsg("Next steps:")
-    reaper.ShowConsoleMsg("1. Open in Visual Studio/Xcode")
-    reaper.ShowConsoleMsg("2. Configure CMake")
-    reaper.ShowConsoleMsg("3. Implement AudioProcessor class")
-    reaper.ShowConsoleMsg("4. Add ONNX model integration")
-    reaper.ShowConsoleMsg("5. Build and test VST3/CLAP")
+
+    local readme = io.open(readme_path, "w")
+    if not readme then
+        reaper.ShowMessageBox("Could not write:\n" .. readme_path, "Development Scaffold", 0)
+        return false
+    end
+    readme:write("# SGM AI Plugin Suite\n\n")
+    readme:write("This is a directory scaffold only, not a buildable plugin.\n\n")
+    readme:write("Next steps:\n")
+    readme:write("1. Create a JUCE project and add PluginProcessor sources.\n")
+    readme:write("2. Add and validate CMake configuration for your JUCE version.\n")
+    readme:write("3. Add CLAP support through a compatible JUCE/CLAP extension if required.\n")
+    readme:write("4. Implement and test processing before loading the plugin in a DAW.\n")
+    readme:close()
+
+    local ignore = io.open(project_path .. "/.gitignore", "w")
+    if ignore then
+        ignore:write("Build/\nbuild/\ncmake-build-*/\n.DS_Store\n")
+        ignore:close()
+    end
+
+    reaper.ShowConsoleMsg("Directory scaffold created at: " .. project_path .. "\n")
+    reaper.ShowConsoleMsg("No build system or plugin sources were generated.\n")
+    return true
 end
 
 -- Main function
 function main()
     show_plugin_development_guide()
-    create_development_project()
+    local answer = reaper.ShowMessageBox(
+        "Create a directory-only development scaffold in the current project folder?\n\n" ..
+        "This does not generate a buildable plugin.",
+        "SGM Plugin Development Scaffold", 1)
+    if answer == 1 then return create_development_project() end
+    return false
 end
 
 return main()
