@@ -132,7 +132,8 @@ jobs:
               tail -n 80 plugin/build/configure.log
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            tail -n 50 plugin/build/configure.log | while IFS= read -r line; do
+            # GitHub keeps at most ten error annotations per step.
+            tail -n 10 plugin/build/configure.log | while IFS= read -r line; do
               line=${line//'%'/'%25'}
               line=${line//$'\r'/}
               echo "::error::${line}"

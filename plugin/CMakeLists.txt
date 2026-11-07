@@ -11,6 +11,9 @@ if(SGM_JUCE_SOURCE_DIR)
     add_subdirectory("${SGM_JUCE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/juce")
 else()
     include(FetchContent)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)
+    endif()
     # JUCE 8.0.4, immutable commit archive with verified content checksum.
     FetchContent_Declare(JUCE
         URL https://codeload.github.com/juce-framework/JUCE/tar.gz/51d11a2be6d5c97ccf12b4e5e827006e19f0555a
