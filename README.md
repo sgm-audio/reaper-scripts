@@ -23,8 +23,14 @@ REAPER ReaScript utilities and AI-workflow helpers by Scott Mills.
 ## Requirements
 
 - REAPER 7.0+ (Lua 5.4)
-- Python 3.9+ for the `.py` helpers (see each file's imports; no shared requirements file)
+- Python 3.9+ for the `.py` helpers
+  - `reaper_ai_integration.py` runs inside REAPER's Python (needs `aaf2`, `RPR_*`)
+  - `suno_workflow_comprehensive_test_suite.py` needs `pip install numpy soundfile`
+  - `suno_workflow_performance_utils.py` additionally needs `psutil`
+  - Optional, not bundled: `yourmt3_stem_separator`, `batch_process_suno`, `SEMAS`
 - SWS/S&M Extension optional (enables extended routing inspection)
+
+See `AGENTS.md` for the full validation commands.
 
 ## Validate
 

@@ -1,0 +1,4 @@
+# Core dependencies for the Suno workflow helpers and test suite
+numpy
+soundfile
+psutil

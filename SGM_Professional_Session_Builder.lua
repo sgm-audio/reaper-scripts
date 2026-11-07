@@ -1,6 +1,6 @@
 -- SGM Studio Professional Session Builder v2.0
 -- Comprehensive DAW analyzer + automatic session creation with highest-value plugins
--- FUCKING FINALLY WORKING VERSION - NO PLACEHOLDERS, FULL FUNCTIONALITY
+-- Fully functional version - no placeholders, complete session building
 
 --[[
 === CODEBASE ANALYSIS & REFACTORING COMPLETE ===

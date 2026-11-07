@@ -16,8 +16,13 @@ from dataclasses import dataclass
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from yourmt3_stem_separator import YourMT3StemSeparator
-from config import (
+try:
+    from yourmt3_stem_separator import YourMT3StemSeparator
+except ImportError:
+    # Optional dependency: only required when stem separation is enabled
+    YourMT3StemSeparator = None
+
+from suno_workflow_config_system import (
     WorkflowConfig as BaseWorkflowConfig,
     WorkflowResult,
     PathConfig,
@@ -209,6 +214,11 @@ class SunoReaperWorkflow:
             if self.config and self.config.create_stems_dir
             else project_dir
         )
+        if YourMT3StemSeparator is None:
+            raise RuntimeError(
+                "Stem separation requires the optional 'yourmt3_stem_separator' "
+                "module, which is not installed."
+            )
         separator = YourMT3StemSeparator(output_dir=stems_dir)
 
         return separator.separate(audio_file)

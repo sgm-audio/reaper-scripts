@@ -1,0 +1,6 @@
+# Optional stem-separation stack (yourmt3_stem_separator / batch_process_suno).
+# These modules are not bundled in this repo; install alongside them.
+torch
+torchaudio
+numpy
+soundfile
