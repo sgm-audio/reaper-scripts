@@ -24,14 +24,6 @@ sys.path.insert(0, ROOT)
 logging.basicConfig(level=logging.WARNING)
 
 
-import importlib.util
-
-# Optional components are not bundled in this repo; skip their tests when absent
-HAS_YOURMT3 = importlib.util.find_spec("yourmt3_stem_separator") is not None
-HAS_BATCH_PROCESS = importlib.util.find_spec("batch_process_suno") is not None
-HAS_SEMAS = importlib.util.find_spec("SEMAS") is not None
-
-
 class TestSunoWorkflowHelper(unittest.TestCase):
     """Test Suno Workflow Helper functionality"""
 
@@ -163,9 +155,8 @@ class TestSunoWorkflowHelper(unittest.TestCase):
             self.assertIn("vocals", content)
 
 
-@unittest.skipUnless(HAS_YOURMT3, "yourmt3_stem_separator module not installed")
 class TestYourMT3StemSeparator(unittest.TestCase):
-    """Test YourMT3+ Stem Separator functionality"""
+    """Test the compatibility-named Demucs separator adapter."""
 
     def setUp(self):
         """Set up test environment"""
@@ -284,7 +275,6 @@ class TestYourMT3StemSeparator(unittest.TestCase):
         self.assertTrue(info["ai_audio_optimized"])
 
 
-@unittest.skipUnless(HAS_BATCH_PROCESS, "batch_process_suno module not installed")
 class TestBatchProcessor(unittest.TestCase):
     """Test Batch Processor functionality"""
 
@@ -299,7 +289,9 @@ class TestBatchProcessor(unittest.TestCase):
             shutil.rmtree(self.test_dir)
 
     def create_test_audio(self, filename: str):
-        """Create a test audio file"""
+        """Create a test audio file, defaulting extensionless names to WAV."""
+        if not os.path.splitext(filename)[1]:
+            filename += ".wav"
         sample_rate = 44100
         duration = 1.0
         t = np.linspace(0, duration, int(sample_rate * duration))
@@ -388,7 +380,6 @@ class TestBatchProcessor(unittest.TestCase):
             self.assertIn("test2.mp3", content)
 
 
-@unittest.skipUnless(HAS_SEMAS, "SEMAS module not installed")
 class TestSEMASIntegration(unittest.TestCase):
     """Test SEMAS Multi-Agent System Integration"""
 
@@ -431,7 +422,6 @@ class TestSEMASIntegration(unittest.TestCase):
         except ImportError as e:
             self.fail(f"SEMAS API import failed: {e}")
 
-    @unittest.skipIf(not os.path.exists(os.path.join(ROOT, "SEMAS")), "SEMAS module not found")
     def test_semas_functionality(self):
         """Test basic SEMAS functionality"""
         try:
@@ -465,12 +455,13 @@ def run_integration_tests():
     except ImportError as e:
         print(f"   [FAIL] Import error: {e}")
         return False
-    for optional in ("yourmt3_stem_separator", "batch_process_suno"):
-        if importlib.util.find_spec(optional) is None:
-            print(f"   [SKIP] optional module not installed: {optional}")
-        else:
-            __import__(optional)
-            print(f"   [OK] {optional} imported successfully")
+    for bundled in ("yourmt3_stem_separator", "batch_process_suno", "SEMAS"):
+        try:
+            __import__(bundled)
+            print(f"   [OK] {bundled} imported successfully")
+        except ImportError as e:
+            print(f"   [FAIL] bundled integration import failed: {bundled}: {e}")
+            return False
 
     # Test AGENTS.md file exists
     print("\n2. Checking documentation...")
@@ -536,17 +527,16 @@ def main():
     else:
         print("Integration Tests: FAILED")
 
-    success = failures == 0 and errors == 0 and integration_result
+    success = failures == 0 and errors == 0 and skipped == 0 and integration_result
 
     if success:
-        print("\n*** ALL AVAILABLE TESTS PASSED! ***")
-        if skipped:
-            print(f"{skipped} optional-integration tests were skipped, not passed.")
+        print("\n*** ALL 23 TESTS PASSED WITH NO SKIPS! ***")
         return 0
-    else:
-        print("\n*** SOME TESTS FAILED ***")
-        print("Please review the test output above.")
-        return 1
+    if skipped:
+        print(f"\n{skipped} tests were skipped; bundled integration tests must execute.")
+    print("\n*** SOME TESTS FAILED OR WERE SKIPPED ***")
+    print("Please review the test output above.")
+    return 1
 
 
 if __name__ == "__main__":

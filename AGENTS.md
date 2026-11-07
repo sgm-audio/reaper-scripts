@@ -18,7 +18,7 @@ lua5.4 tests/lua_regression.lua
 
 # Python syntax and lint (RPR_* names are injected by REAPER)
 python3 -m compileall -q .
-python3 -m pyflakes *.py tests/*.py | grep -v "undefined name 'RPR_"
+python3 -m pyflakes *.py tests/*.py SEMAS/*.py SEMAS/core/*.py | grep -v "undefined name 'RPR_"
 
 # Python tests
 python3 test_modules.py
@@ -27,9 +27,14 @@ python3 suno_workflow_comprehensive_test_suite.py
 ```
 
 Install test dependencies with `python3 -m pip install -r requirements.txt pyflakes`.
-CI (`.github/workflows/ci.yml`) runs all of these checks. Optional
-YourMT3/batch/SEMAS tests skip when their unbundled modules are absent; do not
-count skips as passes.
+CI (`.github/workflows/ci.yml`) runs all of these checks. The separator, batch
+processor, and SEMAS are bundled: the comprehensive suite must report exactly
+23 passes and zero skips, and any skip is a failure. Heavy Demucs execution uses
+the optional `.[stem-separation]` extra and is not faked in lightweight tests.
+
+For native plugin changes, also configure/build/test `plugin/` with CMake and a
+pinned JUCE 8.0.4 source as documented in `plugin/README.md`. CI builds VST3,
+Standalone, and native processing tests on Linux, Windows, and macOS.
 
 ## Conventions
 
@@ -37,12 +42,13 @@ count skips as passes.
 - Use portable `/` path joins in ReaScripts and resolve output beneath an explicit
   REAPER resource/project path. Never assume Windows environment variables exist.
 - Keep the current project safe: confirm destructive or multi-track operations,
-  group edits in undo blocks, and do not claim success when an operation is only
-  instructions or a scaffold.
+  group edits in undo blocks, and distinguish source generation/instructions from
+  completed compilation, rendering, or REAPER edits.
 - Python helpers run under REAPER's Python or standalone. Guard REAPER-only
   globals and optional imports so modules remain importable outside REAPER.
-- Optional components (`yourmt3_stem_separator`, `batch_process_suno`, SEMAS) are
-  not bundled; import them behind guards and report skipped tests accurately.
+- Keep heavyweight model/AAF/REAPER dependencies guarded and actionable. The
+  `yourmt3_stem_separator` compatibility class uses Demucs for real separation;
+  never label passthrough audio as stems or claim a model ran in a fixture test.
 - JSON writers must escape backslashes before quotes/control characters. Add a
   round-trip or parse test when changing persistence code.
 - Add focused regressions for fixed bugs; a syntax check or unselected menu smoke

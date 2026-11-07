@@ -1,12 +1,15 @@
 # Suno Track Workflow for REAPER
 
-Generate a REAPER project from a Suno audio file and stems produced by an
-optional external `yourmt3_stem_separator` module.
+Generate a REAPER project from a Suno audio file and stems produced by the
+bundled `yourmt3_stem_separator` adapter.
 
-> **Important:** `yourmt3_stem_separator.py`, `batch_process_suno.py`, SEMAS, AI
-> models, and project templates are not bundled. The helper returns a clear error
-> if the separator is unavailable. No separation-quality or GPU-performance
-> claims are made by this repository.
+> **Important:** The adapter, batch processor, and SEMAS interfaces are bundled.
+> The compatibility class name is historical: actual separation uses **Demucs**,
+> not YourMT3 transcription. Demucs/Torch and downloaded AI models are optional
+> heavy runtime dependencies and are not bundled. Missing backends produce an
+> actionable error; passthrough audio is never labeled as separated stems.
+> SEMAS's local backend performs PCM-WAV analysis only. No separation-quality or
+> GPU-performance claims are made by this repository.
 
 ## What the bundled helper does
 
@@ -31,11 +34,20 @@ This is **file generation**, not remote control of a running REAPER instance.
 python -m pip install -r requirements.txt
 ```
 
-Install your compatible external YourMT3 separator separately. The optional
-`requirements_yourmt3.txt` lists common torch/audio dependencies, but does not
-install the unbundled separator itself.
+The adapter and lightweight tests need only the core requirements. To execute
+real stem separation, install the optional Demucs backend in the same Python
+environment:
 
-The standalone package can also be installed from the repository root:
+```bash
+python -m pip install -e '.[stem-separation]'
+# Equivalent explicit requirements file:
+python -m pip install -r requirements_yourmt3.txt
+```
+
+Demucs downloads its selected model on first use; model downloads, available
+disk space, and execution time are separate runtime requirements.
+
+The standalone package can also be installed without the heavy backend:
 
 ```bash
 python -m pip install .
@@ -67,6 +79,28 @@ The installed command is equivalent:
 ```bash
 suno-workflow "track.wav" --name "My Song"
 ```
+
+Batch-process only selected extensions and write a real Markdown report:
+
+```bash
+suno-batch "/path/to/audio" --output-dir "/path/to/projects" \
+  --extensions .wav .flac --report "/path/to/batch-report.md"
+# Add --parallel --workers 2 for independent concurrent jobs.
+```
+
+Every file runs the same real separation/project workflow, so a full batch can
+be expensive. One file's failure is reported without discarding other results.
+
+Run the bundled local SEMAS analysis backend directly:
+
+```bash
+semas "track.wav" --json
+python -m SEMAS.cli "track.wav" --json
+```
+
+Local SEMAS analysis supports uncompressed PCM WAV. Requesting enhancement or
+mastering without a configured external processor returns a failed job with an
+explanation rather than claiming audio was processed.
 
 ### Output layout
 
@@ -162,15 +196,18 @@ filesystem scan.
 
 ## Troubleshooting
 
-### “Stem separation requires … yourmt3_stem_separator”
+### “Demucs is not installed”
 
-Install the external module in the same Python environment as the helper. The
-repository cannot provide installation instructions for an unbundled fork; check
-that this import works first:
+Install the bundled adapter's heavy backend in the same Python environment as
+the helper:
 
 ```bash
-python -c "from yourmt3_stem_separator import YourMT3StemSeparator; print('OK')"
+python -m pip install -e '.[stem-separation]'
+python -c "from yourmt3_stem_separator import YourMT3StemSeparator; print(YourMT3StemSeparator().get_model_info())"
 ```
+
+`backend_available` must be true before calling `separate()`. The first real run
+may also need to download the selected Demucs model.
 
 ### “Project directory is not empty”
 
@@ -204,7 +241,9 @@ python -m unittest discover -s tests -p "test_*.py" -v
 python suno_workflow_comprehensive_test_suite.py
 ```
 
-Optional YourMT3/batch/SEMAS tests are reported as skipped when those modules
-are absent; skipped tests are not counted as passes.
+The comprehensive suite must report **23 passed, 0 skipped**. All former
+optional-integration skip guards have been removed, and any skip now makes the
+runner fail. Tests exercise lightweight preprocessing, job/report behavior, and
+a simulated Demucs CLI boundary; they do not claim that a heavy model was run.
 
 **Compatible with:** REAPER 7.0+, Python 3.9+

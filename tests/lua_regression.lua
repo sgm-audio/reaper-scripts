@@ -181,6 +181,26 @@ for _, filename in ipairs(_G.SGMScriptInstaller.documents) do
   check(file ~= nil, "installer references missing document: " .. filename)
   if file then file:close() end
 end
+for _, filename in ipairs(_G.SGMScriptInstaller.plugin_files) do
+  local file = io.open("plugin/" .. filename, "r")
+  check(file ~= nil, "installer references missing plugin source: " .. filename)
+  if file then file:close() end
+end
+
+-- The blueprint must generate an exact, complete copy of the canonical project.
+reaper.ShowMessageBox = function(_, _, _) return 1 end
+assert(loadfile("SGM_plugin_development_blueprint.lua"))()
+reaper.ShowMessageBox = function(_, _, _) return 0 end
+local development = _G.SGMPluginDevelopment
+check(development ~= nil, "plugin development module was not exported")
+if development then
+  for _, filename in ipairs(development.project_files) do
+    local generated = read_file(temp_root .. "/SGM_AI_Plugin_Suite/" .. filename)
+    local canonical = read_file("plugin/" .. filename)
+    check(generated == canonical, "generated plugin source differs: " .. filename)
+  end
+  check(not development.create_development_project(), "generator overwrote an existing project")
+end
 
 -- Remaining entry points must not crash with no menu selection/confirmation.
 for _, filename in ipairs({

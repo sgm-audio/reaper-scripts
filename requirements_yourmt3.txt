@@ -1,5 +1,6 @@
-# Optional stem-separation stack (yourmt3_stem_separator / batch_process_suno).
-# These modules are not bundled in this repo; install alongside them.
+# Optional heavy backend for the bundled yourmt3_stem_separator adapter.
+# The compatibility class name is historical; actual separation uses Demucs.
+demucs>=4.0
 torch
 torchaudio
 numpy

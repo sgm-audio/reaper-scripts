@@ -15,9 +15,11 @@ JSON, and Windows-only paths in cross-platform scanners.
 
 Those areas were repaired or replaced with narrower, honest implementations.
 Focused regression tests were added for the confirmed defects. Features that do
-not exist (automatic third-party chain installation, external rendering,
-48+ track/folder generation, and buildable plugin scaffolding) are no longer
-reported as working.
+not exist (automatic third-party chain installation, external rendering, and
+48+ track/folder generation) are not reported as working. A follow-up change now
+provides a genuinely buildable JUCE source baseline and bundles the three
+formerly absent Python integrations; AI inference inside the plugin, bundled AI
+models, and CLAP remain explicit non-features.
 
 ## Findings and resolutions
 
@@ -32,7 +34,7 @@ reported as working.
 | High | Lua scanners concatenated `\` on macOS/Linux and missed directory-based VST3/AU/LV2 bundles | Portable `/` joins and bundle-aware enumeration added across scanners |
 | High | Lua JSON writers escaped in the wrong order or not at all | Centralized escaping per writer; control characters, quotes, and backslashes handled; focused output/round-trip checks added |
 | High | Generic smoke stubs returned tables for numeric APIs and never ended enumeration | Concrete scalar/path/menu stubs added; CI now treats every unexpected exit code as failure |
-| High | Existing module suite tested nonexistent `AIProductionSystem`; optional skips were reported as passes | Tests now target real classes; separate pass/skip totals; 10 new Python regressions added |
+| High | Existing module suite tested nonexistent `AIProductionSystem`; optional skips were reported as passes | Tests target real classes; all integrations are bundled, 23 comprehensive tests execute, and any skip fails the runner |
 | High | Last-touched automation used the selected track and parameter zero | Uses the actual touched track, FX, and parameter; envelope failure is reported |
 | Medium | Phase tool treated interleaved audio as mono, used scalar sample indexes as time, disabled menu items, and left undo blocks open on early returns | Frame/channel indexing corrected, menus enabled, undo begins only when edits are possible; timing analysis no longer called correlation |
 | Medium | Async executor forwarded unsupported keyword arguments; monitor IDs could collide; failed operations had incomplete metrics | `functools.partial`, UUID IDs, cleanup/close methods, failure duration, concurrent batch copies, and validation added |
@@ -40,7 +42,7 @@ reported as working.
 | Medium | AAF module assumed REAPER and `aaf2` were always present; files were not reliably closed | Runtime/dependency guards, safe standalone import, close/finally handling, empty-composition and metadata checks added |
 | Medium | UUID exporter could crash on missing `APPDATA` and mishandled quoted names | Environment guards, noninteractive CLI options, CSV parsing, and nonzero failures added |
 | Medium | Packaging referenced placeholder URLs, absent entry points/modules, and mismatched dependencies | Real modules/URLs/dependencies, Python 3.9 floor, standard `setup.py`, and package metadata check added |
-| Medium | Development scaffolder did not create directories and claimed a buildable project | Confirmed directory-only scaffold; existing files protected; no bogus CMake/plugin success |
+| Medium | Development scaffolder did not create directories and claimed a buildable project | Canonical pinned-JUCE CMake/C++ project added; blueprint copies all sources byte-for-byte with rollback/overwrite protection, while compilation is explicitly separate |
 | Low | Documentation referenced nonexistent menus, implicit templates, stale install paths, and unsupported capabilities | README, both workflow guides, contributor instructions, installer manifest, and this report updated |
 
 ## Verification record
@@ -53,15 +55,23 @@ and Lua 5.4 (via the Lua 5.4 runtime):
 | Python compilation (`compileall`) | Pass |
 | pyflakes | Pass after filtering only REAPER-injected `RPR_*` names |
 | `test_modules.py` | 3/3 pass |
-| `tests/test_regressions.py` | 10/10 pass |
-| Suno comprehensive suite | 6 pass, 17 optional-module skips, 0 failures |
+| Focused Python regressions (`tests/test_*.py`) | 18/18 pass |
+| Suno comprehensive suite | 23 pass, 0 skips, 0 failures |
 | Lua syntax, all 11 ReaScripts | Pass |
 | Lua smoke, all 11 ReaScripts | Pass |
-| `tests/lua_regression.lua` | 54/54 checks pass |
-| Setuptools metadata and wheel build (`python setup.py --name`, `pip wheel --no-deps .`) | Pass |
+| `tests/lua_regression.lua` | 72/72 checks pass |
+| Setuptools wheel and bundled-module/entry-point content | Pass |
+| Installer → installed blueprint → generated JUCE project | 8/8 files byte-identical |
+| JUCE VST3, Standalone, and native tests on Linux/Windows/macOS | Pass in [CI run 42343310696](https://github.com/sgm-audio/reaper-scripts/actions/runs/42343310696) |
 
-No optional YourMT3, batch processor, or SEMAS code is present, so those 17
-integration tests are explicitly skipped rather than counted as successful.
+The separator, batch processor, and SEMAS modules are now bundled. Their
+lightweight behavior is tested without Demucs/Torch; the Demucs CLI boundary is
+simulated explicitly and no heavy model execution is claimed. Local native
+configuration stops at missing `pkg-config`/JUCE platform headers because the
+sandbox cannot reach Debian repositories, so no local binary is claimed. The
+pinned JUCE VST3, Standalone, and native tests subsequently passed in CI on all
+three desktop platforms; the initial CI runs also caught and fixed missing C
+language enablement and normalized-float unity-gain noise on GCC/Clang.
 
 ## Path and generated-file audit
 
@@ -71,7 +81,8 @@ integration tests are explicitly skipped rather than counted as successful.
 | `rule-of-30-plugins.json` | REAPER resource path |
 | `ai_routing_template.json` | REAPER resource path; unsaved projects do not cause root-relative writes |
 | `plugin_database.json` | REAPER resource path; saved data now reloads |
-| Installed scripts/docs | `<resource>/Scripts/ScottMills/` and `Documentation/` beneath it |
+| Installed scripts/docs/JUCE sources | `<resource>/Scripts/ScottMills/`, with `Documentation/` and `plugin/` beneath it |
+| Generated JUCE project | `SGM_AI_Plugin_Suite/` beneath the saved REAPER project path; exact canonical source copy, no overwrite |
 | Suno projects | Explicit output root, or beside the source; project name is one safe path component |
 | Suno logs | Console by default; file only when `SUNO_LOG_FILE` is set |
 | UUID map | Explicit `-o`, otherwise `reaper_plugin_map.json` in the caller's chosen cwd |
@@ -97,10 +108,17 @@ following therefore remain **manual integration checks**, not claimed passes:
    REAPER plugin rescan.
 5. **AAF import:** Test linked/embedded essence and automation with AAFs from the
    actual source DAWs. Broad AAF-variant compatibility cannot be proven by stubs.
-6. **Optional AI modules:** Run their skipped suites only after installing the
-   exact external forks expected by the caller.
+6. **Heavy AI/runtime validation:** Install the optional Demucs backend, run a
+   real model on representative audio, and evaluate output quality/performance.
+   Exercise unsupported SEMAS enhancement/mastering requests only with a real
+   external processor. Neither is proven by lightweight fixtures.
+7. **Plugin host validation:** Using a local build of the CI-verified sources,
+   scan the VST3 in REAPER, verify automation/state recall and mono/stereo
+   processing, and run the Standalone editor on each target OS. Source/native
+   tests do not prove interactive host compatibility or AI inference, which is
+   not implemented.
 
 Intentional limitations are also documented for users: preset Lua files are data,
 not chain loaders; the AI hub does not render/launch automatically; the builder
 does not create a 48+ track folder hierarchy, third-party chains, sidechains, or
-automation; and the development scaffold is not a buildable plugin.
+automation; and the JUCE baseline has no embedded AI inference or CLAP target.

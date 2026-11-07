@@ -1,11 +1,12 @@
 -- REAPER Script Suite Installer
 -- @description Installs the bundled ReaScripts and workflow documentation into the REAPER resource path
 -- @author Scott Mills
--- @version 4.0
+-- @version 5.0
 -- This installer copies files only. It does not alter the open project, keyboard
--- shortcuts, toolbars, FX chains, or REAPER preferences.
+-- shortcuts, toolbars, FX chains, or REAPER preferences. The bundled JUCE
+-- sources are installed for the blueprint generator; no binary is compiled.
 
-local script_version = "4.0"
+local script_version = "5.0"
 local script_dir = debug.getinfo(1, "S").source:match("@(.+[/\\])") or ""
 local install_path = reaper.GetResourcePath() .. "/Scripts/ScottMills/"
 local documentation_path = install_path .. "Documentation/"
@@ -31,6 +32,17 @@ local DOCUMENTS = {
   "RULE-OF-30-COMPLETE-WORKFLOW.md",
   "SUNO_REAPER_WORKFLOW.md",
   "LICENSE",
+}
+
+local PLUGIN_FILES = {
+  "CMakeLists.txt",
+  "README.md",
+  ".gitignore",
+  "Source/PluginProcessor.h",
+  "Source/PluginProcessor.cpp",
+  "Source/PluginEditor.h",
+  "Source/PluginEditor.cpp",
+  "Tests/PluginTests.cpp",
 }
 
 local function msg(message)
@@ -63,10 +75,13 @@ local function copy_file(source_dir, filename, destination_dir)
   return true
 end
 
-local function install_group(files, destination_dir, failures, copied)
+local function install_group(files, destination_dir, failures, copied, source_dir)
+  source_dir = source_dir or script_dir
   reaper.RecursiveCreateDirectory(destination_dir, 0)
   for _, filename in ipairs(files) do
-    local ok, result = copy_file(script_dir, filename, destination_dir)
+    local output_dir = (destination_dir .. filename):match("^(.*[/\\])") or destination_dir
+    reaper.RecursiveCreateDirectory(output_dir, 0)
+    local ok, result = copy_file(source_dir, filename, destination_dir)
     if ok then
       table.insert(copied, destination_dir .. filename)
       msg("Installed: " .. destination_dir .. filename)
@@ -97,9 +112,9 @@ local function main()
   end
 
   local answer = reaper.ShowMessageBox(
-    "Install " .. #SCRIPTS .. " ReaScripts and " .. #DOCUMENTS ..
-      " documents to:\n" .. install_path ..
-      "\n\nExisting files with the same names will be replaced. Your open project and REAPER settings will not be changed.",
+    "Install " .. #SCRIPTS .. " ReaScripts, " .. #DOCUMENTS ..
+      " documents, and " .. #PLUGIN_FILES .. " JUCE source files to:\n" .. install_path ..
+      "\n\nExisting files with the same names will be replaced. Your open project and REAPER settings will not be changed. No plugin binary is compiled or installed.",
     "Install SGM REAPER Scripts", 1)
   if answer ~= 1 then
     msg("Installation cancelled.")
@@ -109,6 +124,7 @@ local function main()
   local failures, copied = {}, {}
   install_group(SCRIPTS, install_path, failures, copied)
   install_group(DOCUMENTS, documentation_path, failures, copied)
+  install_group(PLUGIN_FILES, install_path .. "plugin/", failures, copied, script_dir .. "plugin/")
   if #failures == 0 then
     local ok, manifest_error = write_manifest(copied)
     if not ok then table.insert(failures, "installed-files.txt: " .. tostring(manifest_error)) end
@@ -125,11 +141,16 @@ local function main()
   reaper.ShowMessageBox(
     "Installed " .. #copied .. " files successfully.\n\n" ..
     "Open Actions → Show action list → Load ReaScript to register scripts from:\n" ..
-    install_path .. "\n\nNo project templates or FX chains are bundled.",
+    install_path .. "\n\nJUCE source is in the plugin/ subdirectory. Run the blueprint action to copy it into a saved project. No compiled plugin, project templates, or FX chains are installed.",
     "Installation Complete", 0)
   msg("Installation complete: " .. #copied .. " files")
   return true
 end
 
-_G.SGMScriptInstaller = {copy_file = copy_file, scripts = SCRIPTS, documents = DOCUMENTS}
+_G.SGMScriptInstaller = {
+  copy_file = copy_file,
+  scripts = SCRIPTS,
+  documents = DOCUMENTS,
+  plugin_files = PLUGIN_FILES,
+}
 main()
