@@ -6,7 +6,6 @@ import sys
 import wave
 import urllib.parse
 import urllib.request
-import pprint
 import json
 
 have_reaper = True  

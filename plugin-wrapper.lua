@@ -1,4 +1,7 @@
 -- REAPER Plugin Wrapper & Manager
+-- @description Wraps plugin chains for repeatable loading and manages a plugin database
+-- @author Scott Mills
+-- @version 1.0
 -- Comprehensive VST/VST3/AU plugin scanning, management, and automation
 -- Version 1.0
 
@@ -13,17 +16,33 @@ if reaper.GetOS() == "Win32" or reaper.GetOS() == "Win64" then
     "C:\\Program Files\\Common Files\\VST3",
     "C:\\Program Files (x86)\\VSTPlugins"
   }
-else
+elseif reaper.GetOS() == "OSX64" then
   SCAN_PATHS = {
     "/Library/Audio/Plug-Ins/VST",
     "/Library/Audio/Plug-Ins/VST3",
     "/Library/Audio/Plug-Ins/Components"
   }
-  -- Per-user paths only exist when HOME is set (never on Windows)
+  -- Per-user paths only exist when HOME is set
   local home = os.getenv("HOME")
   if home then
     table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST")
     table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST3")
+  end
+else
+  -- Linux
+  SCAN_PATHS = {
+    "/usr/lib/vst",
+    "/usr/lib/lxvst",
+    "/usr/lib/vst3",
+    "/usr/local/lib/vst",
+    "/usr/local/lib/lxvst",
+    "/usr/local/lib/vst3"
+  }
+  local home = os.getenv("HOME")
+  if home then
+    table.insert(SCAN_PATHS, home .. "/.vst")
+    table.insert(SCAN_PATHS, home .. "/.vst3")
+    table.insert(SCAN_PATHS, home .. "/.lxvst")
   end
 end
 

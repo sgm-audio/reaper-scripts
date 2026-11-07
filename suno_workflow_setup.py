@@ -5,7 +5,6 @@ Setup script for Suno Reaper Workflow System
 """
 
 from setuptools import setup, find_packages
-import os
 from pathlib import Path
 
 # Read README for long description

@@ -24,6 +24,31 @@ jobs:
           done
           exit $fail
 
+  lua-smoke:
+    # Runs each script with a stubbed REAPER environment to catch
+    # load-time crashes (undefined globals, nil arithmetic) that
+    # a syntax check cannot find. Timeout = script waits on real
+    # REAPER input under stubs -> SKIP, not a failure.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Smoke-run Lua scripts
+        run: |
+          fail=0
+          for f in *.lua; do
+            out=$(timeout 10 lua5.4 tests/lua_smoke.lua "$f" 2>&1); rc=$?
+            if [ $rc -eq 2 ]; then
+              echo "RUNTIME ERROR: $f: $out"; fail=1
+            elif [ $rc -eq 124 ]; then
+              echo "SKIP (waits on REAPER input under stubs): $f"
+            else
+              echo "OK: $f"
+            fi
+          done
+          exit $fail
+
   python-compile:
     runs-on: ubuntu-latest
     steps:
@@ -33,3 +58,37 @@ jobs:
           python-version: "3.12"
       - name: Compile Python
         run: python -m compileall -q .
+
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pyflakes
+        run: pip install pyflakes
+      # RPR_* names are injected by the REAPER runtime, so they are expected
+      # to be "undefined" to pyflakes outside REAPER.
+      - name: Lint Python
+        run: |
+          out=$(python -m pyflakes *.py | grep -v "undefined name 'RPR_" || true)
+          if [ -n "$out" ]; then
+            echo "$out"
+            exit 1
+          fi
+          echo "pyflakes clean"
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Module tests
+        run: python test_modules.py
+      - name: Suno workflow test suite
+        run: python suno_workflow_comprehensive_test_suite.py

@@ -32,7 +32,7 @@ def test_ai_integration():
         import numpy as np
 
         # Test basic initialization
-        ai_system = ai_module.AIProductionSystem()
+        ai_module.AIProductionSystem()
         print("  [OK] AIProductionSystem initialized")
 
         # Test audio analysis
@@ -70,7 +70,7 @@ def test_plugin_compatibility():
         spec.loader.exec_module(plugin_module)
 
         # Test database initialization
-        db = plugin_module.PluginDatabase("test_plugin.db")
+        plugin_module.PluginDatabase("test_plugin.db")
         print("  [OK] Plugin database initialized")
 
         # Test plugin scanner
@@ -110,7 +110,7 @@ def test_template_validator():
         spec.loader.exec_module(template_module)
 
         # Test validator initialization
-        validator = template_module.TemplateValidator(os.path.dirname(__file__))
+        template_module.TemplateValidator(os.path.dirname(__file__))
         print("  [OK] Template validator initialized")
 
         return True

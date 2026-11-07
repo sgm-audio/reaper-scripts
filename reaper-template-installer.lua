@@ -1,4 +1,7 @@
 -- REAPER Ultimate Template System v3.0
+-- @description Installs the session template suite into the REAPER resource path
+-- @author Scott Mills
+-- @version 3.0
 -- Complete Installation and Configuration Script
 -- Author: Scott Mills Audio Systems
 
@@ -477,6 +480,7 @@ function main()
     {func = create_custom_menus, name = "Custom Menus"}
   }
   
+  local failed_steps = {}
   for i, step in ipairs(steps) do
     show_progress(i-1, #steps, "Installing " .. step.name .. "...")
     -- pcall per step: one failing step must not abort the whole install
@@ -486,8 +490,18 @@ function main()
     else
       show_progress(i, #steps, step.name .. " FAILED")
       msg("ERROR in step '" .. step.name .. "': " .. tostring(err))
+      table.insert(failed_steps, step.name .. ": " .. tostring(err))
     end
     msg("")
+  end
+
+  -- Surface failures in a dialog, not just the console
+  if #failed_steps > 0 then
+    reaper.ShowMessageBox(
+      #failed_steps .. " of " .. #steps .. " install step(s) failed:\n\n" ..
+      table.concat(failed_steps, "\n") ..
+      "\n\nSee the REAPER console for details.",
+      "Template Installation — Partial Failure", 0)
   end
   
   msg("==============================================")

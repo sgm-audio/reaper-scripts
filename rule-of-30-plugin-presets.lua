@@ -1,4 +1,7 @@
 -- RULE OF 30 - PLUGIN PRESET CONFIGURATIONS
+-- @description Plugin-chain preset library for the Rule of 30 workflow
+-- @author Scott Mills
+-- @version 1.0
 -- Professional Plugin Chains for Heavy Industrial Production
 -- Maps specific Waves, iZotope, FabFilter, Neural DSP, Soundtoys plugins
 -- Version 1.0

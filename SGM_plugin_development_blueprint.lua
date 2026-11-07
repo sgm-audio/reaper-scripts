@@ -1,4 +1,7 @@
 -- VST3/CLAP Plugin Development Blueprint
+-- @description VST3/CLAP plugin development scaffolding helpers
+-- @author Scott Mills
+-- @version 1.0
 -- Comprehensive guide for building professional AI audio plugins
 
 --[[

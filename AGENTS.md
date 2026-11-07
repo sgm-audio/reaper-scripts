@@ -10,16 +10,19 @@ Always run these before considering a change done:
 # Lua syntax (REAPER 7 = Lua 5.4)
 for f in *.lua; do lua5.4 -e "assert(loadfile('$f'))" || echo "SYNTAX ERROR: $f"; done
 
+# Lua smoke-run with stubbed REAPER (catches runtime crashes; timeout = waits on real input)
+for f in *.lua; do timeout 10 lua5.4 tests/lua_smoke.lua "$f"; done
+
 # Python syntax
 python3 -m compileall -q .
 
-# Python lint (install pyflakes)
-python3 -m pyflakes *.py   # RPR_* names are provided by the REAPER runtime; ignore those
+# Python lint (install pyflakes) — RPR_* names come from the REAPER runtime; ignore those
+python3 -m pyflakes *.py | grep -v "undefined name 'RPR_"
 
 # Module tests
 python3 test_modules.py
 
-# Suno workflow suite (needs: pip install numpy soundfile)
+# Suno workflow suite (needs: pip install -r requirements.txt)
 python3 suno_workflow_comprehensive_test_suite.py
 ```
 

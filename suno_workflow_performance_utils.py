@@ -12,8 +12,6 @@ import shutil
 from typing import Callable, Any, Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime
-import threading
 import psutil
 import gc
 
@@ -125,7 +123,7 @@ def monitor_performance(operation_name: Optional[str] = None):
                 result = func(*args, **kwargs)
                 performance_monitor.stop_monitoring(monitor_id, operations_completed=1)
                 return result
-            except Exception as e:
+            except Exception:
                 if monitor_id in performance_monitor.metrics:
                     performance_monitor.metrics[monitor_id].operations_failed += 1
                 raise
@@ -139,7 +137,7 @@ def monitor_performance(operation_name: Optional[str] = None):
                 result = await func(*args, **kwargs)
                 performance_monitor.stop_monitoring(monitor_id, operations_completed=1)
                 return result
-            except Exception as e:
+            except Exception:
                 if monitor_id in performance_monitor.metrics:
                     performance_monitor.metrics[monitor_id].operations_failed += 1
                 raise

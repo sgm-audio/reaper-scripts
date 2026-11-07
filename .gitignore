@@ -3,3 +3,4 @@ __pycache__/
 *.pyo
 test_plugin.db
 suno_workflow.log
+reaper.GetProjectPath*

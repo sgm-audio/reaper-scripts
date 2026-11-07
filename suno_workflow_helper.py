@@ -9,7 +9,7 @@ import argparse
 import logging
 import logging.config
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict
 import shutil
 from dataclasses import dataclass
 
@@ -25,12 +25,7 @@ except ImportError:
 from suno_workflow_config_system import (
     WorkflowConfig as BaseWorkflowConfig,
     WorkflowResult,
-    PathConfig,
-    AudioConfig,
-    ModelConfig,
-    DEFAULT_CONFIG,
     LOGGING_CONFIG,
-    ERROR_MESSAGES,
     get_config_from_env,
     validate_config,
 )
@@ -275,10 +270,10 @@ class SunoReaperWorkflow:
             # Add tracks for each stem
             track_names = ["Vocals", "Drums", "Bass", "Other", "Original Mix"]
             for i, track_name in enumerate(track_names):
-                f.write(f"  <TRACK\n")
+                f.write("  <TRACK\n")
                 f.write(f'    NAME "{track_name}"\n')
                 f.write(f"    TRACKID {{{i}}}\n")
-                f.write(f"  >\n")
+                f.write("  >\n")
 
             f.write(">\n")
 
@@ -346,7 +341,7 @@ class SunoReaperWorkflow:
                     relative_path = stem_path
                 f.write(f"- **{stem_name.capitalize()}**: `{relative_path}`\n")
 
-            f.write(f"\n## Original Mix\n\n")
+            f.write("\n## Original Mix\n\n")
             if original_file:
                 try:
                     original_relative = os.path.relpath(original_file, project_dir)
@@ -390,16 +385,16 @@ class SunoReaperWorkflow:
         print("\nProject created successfully!")
         print(f"\nProject Directory: {result.project_dir}")
         print(f"Project File:      {result.project_file}")
-        print(f"\nStems Generated:")
+        print("\nStems Generated:")
 
         for stem_name, stem_path in result.stem_paths.items():
             print(f"  {stem_name:12s} -> {os.path.basename(stem_path)}")
 
-        print(f"\nNext Steps:")
-        print(f"  1. Open Reaper")
+        print("\nNext Steps:")
+        print("  1. Open Reaper")
         print(f"  2. Load project: {result.project_file}")
         print(f"  3. Import stems using instructions in: {result.instructions_file}")
-        print(f"  4. Start mixing!")
+        print("  4. Start mixing!")
         print("=" * 80 + "\n")
 
 
@@ -431,7 +426,7 @@ def main():
 
     # Process track
     try:
-        result = workflow.process_suno_track(
+        workflow.process_suno_track(
             suno_audio_file=args.input,
             project_name=args.name,
             auto_import=not args.no_auto_import,

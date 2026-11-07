@@ -1,4 +1,7 @@
 -- PHASE ALIGNMENT TOOL
+-- @description Aligns quad-tracked DI guitars by transient onset
+-- @author Scott Mills
+-- @version 1.0
 -- Auto-align quad-tracked guitars for tight metal production
 -- Analyzes transients and aligns DI tracks before amp processing
 -- Version 1.0
@@ -109,6 +112,9 @@ local function alignSelectedTracks()
   if #tracks < 2 then
     reaper.ShowConsoleMsg("❌ Please select at least 2 tracks to align\n")
     reaper.ShowConsoleMsg("   (e.g., Rhythm L and Rhythm R guitar tracks)\n")
+    reaper.ShowMessageBox(
+      "Please select at least 2 tracks to align\n(e.g., Rhythm L and Rhythm R guitar tracks)",
+      "Phase Alignment — No Tracks Selected", 0)
     return
   end
 
