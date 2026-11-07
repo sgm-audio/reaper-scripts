@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 namespace
@@ -73,8 +75,18 @@ void testDoublePrecisionAndState()
         for (auto sample = 0; sample < buffer.getNumSamples(); ++sample)
             buffer.setSample(channel, sample, 0.125);
     processor.processBlock(buffer, midi);
-    expect(std::abs(buffer.getSample(0, 32) - 0.125) < 1.0e-12,
-           "double-precision unity processing changed audio");
+    const auto actual = buffer.getSample(0, 32);
+    if (std::abs(actual - 0.125) >= 1.0e-12)
+    {
+        std::ostringstream details;
+        details << std::setprecision(17)
+                << "double-precision unity processing changed audio: actual=" << actual
+                << ", gain=" << processor.parameters.getRawParameterValue("gain")->load()
+                << ", inputs=" << processor.getTotalNumInputChannels()
+                << ", outputs=" << processor.getTotalNumOutputChannels()
+                << ", bufferChannels=" << buffer.getNumChannels();
+        throw std::runtime_error(details.str());
+    }
 
     setParameter(processor, "gain", 9.0f);
     juce::MemoryBlock state;
