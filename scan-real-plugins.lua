@@ -19,7 +19,6 @@ local VST_PATHS = {
 
   -- VST3 Paths
   "C:\\Program Files\\Common Files\\VST3",
-  os.getenv("LOCALAPPDATA") .. "\\Programs\\Common\\VST3",
 
   -- Specific Plugin Vendors
   "C:\\Program Files (x86)\\Waves\\Plug-Ins V16",
@@ -27,6 +26,12 @@ local VST_PATHS = {
   "C:\\Program Files\\Plugin Alliance",
   "C:\\Program Files\\Audified\\GK Amplifikation 3 Pro"
 }
+
+-- LOCALAPPDATA only exists on Windows; guard against nil on macOS/Linux
+local localappdata = os.getenv("LOCALAPPDATA")
+if localappdata then
+  table.insert(VST_PATHS, localappdata .. "\\Programs\\Common\\VST3")
+end
 
 -- ===================================
 -- PLUGIN SCANNER
