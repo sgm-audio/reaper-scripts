@@ -1,399 +1,224 @@
--- REAL PLUGIN SCANNER
--- @description Scans real VST plugin paths and exports the found plugins to JSON
+-- Filesystem Plugin Scanner
+-- @description Scans OS plugin paths and exports matching Rule of 30 plugins to rule-of-30-plugins.json
 -- @author Scott Mills
--- @version 1.0
--- Scans actual VST paths from user's system
--- Uses REAL paths: Waves V16, Plugin Alliance, Audified, LANDR, etc.
--- Version 1.0
+-- @version 2.0
 
-reaper.ClearConsole()
-reaper.ShowConsoleMsg("=== SCANNING REAL VST PLUGINS ===\n\n")
+local FORMAT_BY_EXTENSION = {
+  [".dll"] = "vst2", [".vst"] = "vst2", [".vst3"] = "vst3",
+  [".component"] = "au", [".clap"] = "clap", [".lv2"] = "lv2",
+}
+local BUNDLE_EXTENSIONS = {[".vst"] = true, [".vst3"] = true, [".component"] = true, [".lv2"] = true}
 
--- ===================================
--- USER'S ACTUAL VST PATHS
--- ===================================
-
-local VST_PATHS = {}
-local os_type = reaper.GetOS()
-
-if os_type == "Win32" or os_type == "Win64" then
-  -- Windows paths
-  -- VST2 Paths
-  table.insert(VST_PATHS, "C:\\Program Files\\VSTPlugIns")
-  table.insert(VST_PATHS, "C:\\Program Files (x86)\\VSTPlugIns")
-  table.insert(VST_PATHS, "C:\\Program Files (x86)\\Steinberg\\VSTPlugins")
-  table.insert(VST_PATHS, "C:\\Program Files\\Steinberg\\VstPlugins")
-  -- VST3 Paths
-  table.insert(VST_PATHS, "C:\\Program Files\\Common Files\\VST3")
-  -- Specific Plugin Vendors
-  table.insert(VST_PATHS, "C:\\Program Files (x86)\\Waves\\Plug-Ins V16")
-  table.insert(VST_PATHS, "C:\\Program Files\\LANDR\\Mastering Plugin PRO")
-  table.insert(VST_PATHS, "C:\\Program Files\\Plugin Alliance")
-  table.insert(VST_PATHS, "C:\\Program Files\\Audified\\GK Amplifikation 3 Pro")
-
-  -- LOCALAPPDATA only exists on Windows; guard against nil
-  local localappdata = os.getenv("LOCALAPPDATA")
-  if localappdata then
-    table.insert(VST_PATHS, localappdata .. "\\Programs\\Common\\VST3")
-  end
-
-elseif os_type == "OSX64" then
-  -- macOS paths
-  local home = os.getenv("HOME") or ""
-  table.insert(VST_PATHS, "/Library/Audio/Plug-Ins/VST")
-  table.insert(VST_PATHS, "/Library/Audio/Plug-Ins/VST3")
-  table.insert(VST_PATHS, "/Library/Audio/Plug-Ins/Components")
-  if home ~= "" then
-    table.insert(VST_PATHS, home .. "/Library/Audio/Plug-Ins/VST")
-    table.insert(VST_PATHS, home .. "/Library/Audio/Plug-Ins/VST3")
-  end
-
-else
-  -- Linux paths
-  local home = os.getenv("HOME") or ""
-  table.insert(VST_PATHS, "/usr/lib/vst")
-  table.insert(VST_PATHS, "/usr/lib/lxvst")
-  table.insert(VST_PATHS, "/usr/lib/vst3")
-  table.insert(VST_PATHS, "/usr/local/lib/vst")
-  table.insert(VST_PATHS, "/usr/local/lib/lxvst")
-  table.insert(VST_PATHS, "/usr/local/lib/vst3")
-  if home ~= "" then
-    table.insert(VST_PATHS, home .. "/.vst")
-    table.insert(VST_PATHS, home .. "/.vst3")
-    table.insert(VST_PATHS, home .. "/.lxvst")
-  end
+local function join_path(left, right)
+  return left:gsub("[/\\]+$", "") .. "/" .. right
 end
 
--- ===================================
--- PLUGIN SCANNER
--- ===================================
+local function extension(filename)
+  return filename:lower():match("(%.[^%.]+)$") or ""
+end
 
-local function scanDirectory(path, extension)
+local function json_string(value)
+  local escaped = tostring(value or ""):gsub("\\", "\\\\"):gsub('"', '\\"')
+  escaped = escaped:gsub("%c", function(char)
+    local replacements = {["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t"}
+    return replacements[char] or string.format("\\u%04X", string.byte(char))
+  end)
+  return '"' .. escaped .. '"'
+end
+
+local function get_scan_paths()
+  local paths = {}
+  local function add(path) if path and path ~= "" then table.insert(paths, path) end end
+  local os_type = reaper.GetOS()
+  if os_type == "Win32" or os_type == "Win64" then
+    add("C:/Program Files/VSTPlugins")
+    add("C:/Program Files (x86)/VSTPlugins")
+    add("C:/Program Files/Steinberg/VSTPlugins")
+    add("C:/Program Files (x86)/Steinberg/VSTPlugins")
+    add("C:/Program Files/Common Files/VST3")
+    add("C:/Program Files/Common Files/CLAP")
+    add("C:/Program Files (x86)/Waves/Plug-Ins V16")
+    add("C:/Program Files/Waves/Plug-Ins V16")
+    local localappdata = os.getenv("LOCALAPPDATA")
+    if localappdata then add(join_path(localappdata, "Programs/Common/VST3")) end
+  elseif os_type:match("^OSX") then
+    add("/Library/Audio/Plug-Ins/VST")
+    add("/Library/Audio/Plug-Ins/VST3")
+    add("/Library/Audio/Plug-Ins/Components")
+    add("/Library/Audio/Plug-Ins/CLAP")
+    add("/Library/Audio/Plug-Ins/LV2")
+    local home = os.getenv("HOME")
+    if home then
+      for _, folder in ipairs({"VST", "VST3", "Components", "CLAP", "LV2"}) do
+        add(join_path(home, "Library/Audio/Plug-Ins/" .. folder))
+      end
+    end
+  else
+    for _, path in ipairs({"/usr/lib/vst", "/usr/lib/lxvst", "/usr/lib/vst3", "/usr/lib/clap", "/usr/lib/lv2", "/usr/local/lib/vst", "/usr/local/lib/vst3", "/usr/local/lib/clap", "/usr/local/lib/lv2"}) do add(path) end
+    local home = os.getenv("HOME")
+    if home then
+      for _, folder in ipairs({".vst", ".lxvst", ".vst3", ".clap", ".lv2"}) do add(join_path(home, folder)) end
+    end
+  end
+  return paths
+end
+
+local function scanDirectory(path)
   local plugins = {}
-
-  if not reaper.file_exists(path) then
-    return plugins
+  local index = 0
+  while true do
+    local filename = reaper.EnumerateFiles(path, index)
+    if not filename then break end
+    local ext = extension(filename)
+    local plugin_format = FORMAT_BY_EXTENSION[ext]
+    if plugin_format then
+      table.insert(plugins, {
+        name = filename:sub(1, #filename - #ext),
+        path = join_path(path, filename),
+        type = plugin_format,
+      })
+    end
+    index = index + 1
   end
 
-  local i = 0
-  repeat
-    local file = reaper.EnumerateFiles(path, i)
-    if file then
-      if file:match(extension .. "$") then
-        table.insert(plugins, {
-          name = file:gsub(extension .. "$", ""),
-          path = path .. "\\" .. file,
-          type = extension:gsub("%.", ""):upper()
-        })
-      end
+  index = 0
+  while true do
+    local dirname = reaper.EnumerateSubdirectories(path, index)
+    if not dirname then break end
+    local full_path = join_path(path, dirname)
+    local ext = extension(dirname)
+    local plugin_format = FORMAT_BY_EXTENSION[ext]
+    if plugin_format and BUNDLE_EXTENSIONS[ext] then
+      table.insert(plugins, {
+        name = dirname:sub(1, #dirname - #ext),
+        path = full_path,
+        type = plugin_format,
+      })
+    else
+      for _, plugin in ipairs(scanDirectory(full_path)) do table.insert(plugins, plugin) end
     end
-    i = i + 1
-  until not file
-
-  -- Scan subdirectories
-  i = 0
-  repeat
-    local subdir = reaper.EnumerateSubdirectories(path, i)
-    if subdir then
-      local sub_plugins = scanDirectory(path .. "\\" .. subdir, extension)
-      for _, plugin in ipairs(sub_plugins) do
-        table.insert(plugins, plugin)
-      end
-    end
-    i = i + 1
-  until not subdir
-
+    index = index + 1
+  end
   return plugins
 end
 
-local function scanAllPlugins()
-  local all_plugins = {
-    vst2 = {},
-    vst3 = {},
-    dll = {},
-    total = 0
-  }
+local KEY_PATTERNS = {
+  waves_ssl_comp = {"ssl", "comp"},
+  waves_cla76 = {"cla", "76"},
+  waves_h_delay = {"h%-delay"},
+  waves_h_eq = {"h%-eq"},
+  waves_j37_tape = {"j37"},
+  waves_ovox = {"ovox"},
+  waves_tune_realtime = {"tune", "real"},
+  izotope_neutron = {"neutron"},
+  izotope_ozone = {"ozone"},
+  izotope_trash = {"trash"},
+  izotope_nectar = {"nectar"},
+  izotope_stutter_edit = {"stutter"},
+  fabfilter_proq3 = {"pro%-q"},
+  fabfilter_prol2 = {"pro%-l"},
+  fabfilter_saturn = {"saturn"},
+  neural_gojira = {"gojira"},
+  neural_fortin = {"fortin"},
+  neural_nameless = {"nameless"},
+  landr_mastering = {"landr"},
+  audified_gk = {"gk", "amplifikation"},
+}
 
-  reaper.ShowConsoleMsg("Scanning VST directories...\n\n")
-
-  for _, path in ipairs(VST_PATHS) do
-    reaper.ShowConsoleMsg("Scanning: " .. path .. "\n")
-
-    -- Scan for VST2 DLLs
-    local vst2_plugins = scanDirectory(path, ".dll")
-    for _, plugin in ipairs(vst2_plugins) do
-      table.insert(all_plugins.vst2, plugin)
-      all_plugins.total = all_plugins.total + 1
-    end
-
-    -- Scan for VST3
-    local vst3_plugins = scanDirectory(path, ".vst3")
-    for _, plugin in ipairs(vst3_plugins) do
-      table.insert(all_plugins.vst3, plugin)
-      all_plugins.total = all_plugins.total + 1
-    end
+local function matches(name, patterns)
+  local lower = name:lower()
+  for _, pattern in ipairs(patterns) do
+    if not lower:find(pattern) then return false end
   end
-
-  return all_plugins
+  return true
 end
-
--- ===================================
--- PLUGIN CATEGORIZER
--- ===================================
-
-local function categorizeProPlugin(plugin_name)
-  local name_lower = plugin_name:lower()
-
-  local categories = {
-    waves_v16 = false,
-    izotope = false,
-    fabfilter = false,
-    neural_dsp = false,
-    soundtoys = false,
-    plugin_alliance = false,
-    landr = false,
-    audified = false
-  }
-
-  -- Check vendor
-  if plugin_name:find("Waves") or plugin_name:find("WV16") then
-    categories.waves_v16 = true
-  elseif name_lower:find("izotope") then
-    categories.izotope = true
-  elseif name_lower:find("fabfilter") then
-    categories.fabfilter = true
-  elseif name_lower:find("neural") or name_lower:find("archetype") or name_lower:find("fortin") then
-    categories.neural_dsp = true
-  elseif name_lower:find("soundtoys") then
-    categories.soundtoys = true
-  elseif name_lower:find("landr") then
-    categories.landr = true
-  elseif name_lower:find("audified") or name_lower:find("gk amplifikation") then
-    categories.audified = true
-  end
-
-  return categories
-end
-
--- ===================================
--- KEY PLUGIN FINDER (For Rule of 30)
--- ===================================
 
 local function findKeyPlugins(all_plugins)
-  reaper.ShowConsoleMsg("\n=== FINDING KEY PLUGINS FOR RULE OF 30 ===\n\n")
-
-  local key_plugins = {
-    -- Waves V16 (Critical)
-    waves_ssl_comp = nil,
-    waves_cla76 = nil,
-    waves_h_delay = nil,
-    waves_h_eq = nil,
-    waves_j37_tape = nil,
-    waves_ovox = nil,
-    waves_tune_realtime = nil,
-
-    -- iZotope (Critical)
-    izotope_neutron = nil,
-    izotope_ozone = nil,
-    izotope_trash = nil,
-    izotope_nectar = nil,
-    izotope_stutter_edit = nil,
-
-    -- FabFilter (Critical)
-    fabfilter_proq3 = nil,
-    fabfilter_prol2 = nil,
-    fabfilter_saturn = nil,
-
-    -- Neural DSP (Guitar Amps)
-    neural_gojira = nil,
-    neural_fortin = nil,
-
-    -- Others
-    landr_mastering = nil,
-    audified_gk = nil
-  }
-
-  local found_count = 0
-
-  -- Search through all plugins
-  for _, plugin in ipairs(all_plugins.vst2) do
-    local name_lower = plugin.name:lower()
-
-    -- Waves
-    if name_lower:find("ssl") and name_lower:find("comp") then
-      key_plugins.waves_ssl_comp = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("cla") and name_lower:find("76") then
-      key_plugins.waves_cla76 = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("h%-delay") or name_lower:find("hdelay") then
-      key_plugins.waves_h_delay = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("h%-eq") or name_lower:find("heq") then
-      key_plugins.waves_h_eq = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("j37") then
-      key_plugins.waves_j37_tape = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("ovox") then
-      key_plugins.waves_ovox = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("tune") and name_lower:find("real") then
-      key_plugins.waves_tune_realtime = plugin.path
-      found_count = found_count + 1
-    end
-
-    -- iZotope
-    if name_lower:find("neutron") then
-      key_plugins.izotope_neutron = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("ozone") then
-      key_plugins.izotope_ozone = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("trash") then
-      key_plugins.izotope_trash = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("nectar") then
-      key_plugins.izotope_nectar = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("stutter") then
-      key_plugins.izotope_stutter_edit = plugin.path
-      found_count = found_count + 1
-    end
-
-    -- FabFilter
-    if name_lower:find("pro%-q") or name_lower:find("proq") then
-      key_plugins.fabfilter_proq3 = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("pro%-l") or name_lower:find("prol") then
-      key_plugins.fabfilter_prol2 = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("saturn") then
-      key_plugins.fabfilter_saturn = plugin.path
-      found_count = found_count + 1
-    end
-
-    -- Neural DSP
-    if name_lower:find("gojira") then
-      key_plugins.neural_gojira = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("fortin") or name_lower:find("nameless") then
-      key_plugins.neural_fortin = plugin.path
-      found_count = found_count + 1
-    end
-
-    -- LANDR
-    if name_lower:find("landr") then
-      key_plugins.landr_mastering = plugin.path
-      found_count = found_count + 1
-    end
-
-    -- Audified
-    if name_lower:find("gk") and name_lower:find("amplifikation") then
-      key_plugins.audified_gk = plugin.path
-      found_count = found_count + 1
+  local key_plugins = {}
+  for _, plugin in ipairs(all_plugins) do
+    for key, patterns in pairs(KEY_PATTERNS) do
+      if not key_plugins[key] and matches(plugin.name, patterns) then
+        key_plugins[key] = {name = plugin.name, path = plugin.path, type = plugin.type}
+      end
     end
   end
-
-  -- Check VST3 as well
-  for _, plugin in ipairs(all_plugins.vst3) do
-    local name_lower = plugin.name:lower()
-
-    if name_lower:find("ozone") and not key_plugins.izotope_ozone then
-      key_plugins.izotope_ozone = plugin.path
-      found_count = found_count + 1
-    elseif name_lower:find("neutron") and not key_plugins.izotope_neutron then
-      key_plugins.izotope_neutron = plugin.path
-      found_count = found_count + 1
-    end
-  end
-
-  -- Display results
-  reaper.ShowConsoleMsg("CRITICAL PLUGINS FOUND: " .. found_count .. "\n\n")
-
-  reaper.ShowConsoleMsg("=== WAVES V16 ===\n")
-  reaper.ShowConsoleMsg("  SSL Comp: " .. (key_plugins.waves_ssl_comp or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  CLA-76: " .. (key_plugins.waves_cla76 or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  H-Delay: " .. (key_plugins.waves_h_delay or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  H-EQ: " .. (key_plugins.waves_h_eq or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  J37 Tape: " .. (key_plugins.waves_j37_tape or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  OVox: " .. (key_plugins.waves_ovox or "NOT FOUND") .. "\n")
-
-  reaper.ShowConsoleMsg("\n=== iZotope ===\n")
-  reaper.ShowConsoleMsg("  Ozone 11: " .. (key_plugins.izotope_ozone or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Neutron 4: " .. (key_plugins.izotope_neutron or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Trash 2: " .. (key_plugins.izotope_trash or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Nectar 4: " .. (key_plugins.izotope_nectar or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Stutter Edit: " .. (key_plugins.izotope_stutter_edit or "NOT FOUND") .. "\n")
-
-  reaper.ShowConsoleMsg("\n=== FabFilter ===\n")
-  reaper.ShowConsoleMsg("  Pro-Q 3: " .. (key_plugins.fabfilter_proq3 or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Pro-L 2: " .. (key_plugins.fabfilter_prol2 or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Saturn 2: " .. (key_plugins.fabfilter_saturn or "NOT FOUND") .. "\n")
-
-  reaper.ShowConsoleMsg("\n=== Neural DSP ===\n")
-  reaper.ShowConsoleMsg("  Archetype Gojira: " .. (key_plugins.neural_gojira or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Fortin Nameless: " .. (key_plugins.neural_fortin or "NOT FOUND") .. "\n")
-
-  reaper.ShowConsoleMsg("\n=== Others ===\n")
-  reaper.ShowConsoleMsg("  LANDR Mastering: " .. (key_plugins.landr_mastering or "NOT FOUND") .. "\n")
-  reaper.ShowConsoleMsg("  Audified GK Amp: " .. (key_plugins.audified_gk or "NOT FOUND") .. "\n")
-
   return key_plugins
 end
 
--- ===================================
--- MAIN EXECUTION
--- ===================================
+local function exportJSON(output_path, all_plugins, key_plugins, elapsed)
+  local lines = {"{", '  "scan_date": ' .. json_string(os.date("%Y-%m-%d %H:%M:%S")) .. ",", '  "scan_seconds": ' .. string.format("%.3f", elapsed) .. ",", '  "total_plugins": ' .. #all_plugins .. ",", '  "key_plugins": {'}
+  local keys = {}
+  for key in pairs(key_plugins) do table.insert(keys, key) end
+  table.sort(keys)
+  for index, key in ipairs(keys) do
+    local plugin = key_plugins[key]
+    table.insert(lines, "    " .. json_string(key) .. ": {" ..
+      '"name": ' .. json_string(plugin.name) ..
+      ', "path": ' .. json_string(plugin.path) ..
+      ', "type": ' .. json_string(plugin.type) .. "}" .. (index < #keys and "," or ""))
+  end
+  table.insert(lines, "  },")
+  table.insert(lines, '  "plugins": [')
+  for index, plugin in ipairs(all_plugins) do
+    table.insert(lines, "    {" ..
+      '"name": ' .. json_string(plugin.name) ..
+      ', "path": ' .. json_string(plugin.path) ..
+      ', "type": ' .. json_string(plugin.type) .. "}" .. (index < #all_plugins and "," or ""))
+  end
+  table.insert(lines, "  ]")
+  table.insert(lines, "}")
+
+  local file, open_error = io.open(output_path, "w")
+  if not file then return false, open_error end
+  local ok, write_error = file:write(table.concat(lines, "\n") .. "\n")
+  file:close()
+  return ok ~= nil, write_error
+end
 
 local function main()
+  reaper.ClearConsole()
+  reaper.ShowConsoleMsg("=== FILESYSTEM PLUGIN SCAN ===\n\n")
   local start_time = reaper.time_precise()
+  local all_plugins, seen = {}, {}
+  local paths = get_scan_paths()
+  for _, path in ipairs(paths) do
+    reaper.ShowConsoleMsg("Scanning: " .. path .. "\n")
+    for _, plugin in ipairs(scanDirectory(path)) do
+      local identity = plugin.path:lower()
+      if not seen[identity] then
+        seen[identity] = true
+        table.insert(all_plugins, plugin)
+      end
+    end
+  end
+  table.sort(all_plugins, function(a, b) return a.path:lower() < b.path:lower() end)
+  local key_plugins = findKeyPlugins(all_plugins)
+  local key_count = 0
+  for _ in pairs(key_plugins) do key_count = key_count + 1 end
 
-  local all_plugins = scanAllPlugins()
-
-  reaper.ShowConsoleMsg("\n=== SCAN COMPLETE ===\n")
-  reaper.ShowConsoleMsg("Total VST2: " .. #all_plugins.vst2 .. "\n")
-  reaper.ShowConsoleMsg("Total VST3: " .. #all_plugins.vst3 .. "\n")
-  reaper.ShowConsoleMsg("Grand Total: " .. all_plugins.total .. "\n\n")
-
-  -- Surface an empty scan in a dialog, not just the console
-  if all_plugins.total == 0 then
+  local elapsed = reaper.time_precise() - start_time
+  reaper.ShowConsoleMsg(string.format("\nFound %d plugins (%d Rule of 30 matches) in %.2fs\n", #all_plugins, key_count, elapsed))
+  if #all_plugins == 0 then
     reaper.ShowMessageBox(
-      "No VST/VST3 plugins were found in any of the " .. #VST_PATHS ..
-      " scanned paths.\n\nCheck that your plugin paths are correct for your OS, " ..
-      "or that REAPER's own plugin scan has found them.",
+      "No supported plugins were found in the standard paths.\n\n" ..
+      "Use list-all-available-plugins.lua to inspect REAPER's configured plugin cache instead.",
       "Plugin Scan — Nothing Found", 0)
   end
 
-  -- Find key plugins for Rule of 30
-  local key_plugins = findKeyPlugins(all_plugins)
-
-  local end_time = reaper.time_precise()
-  reaper.ShowConsoleMsg("\nScan completed in " .. string.format("%.2f", end_time - start_time) .. " seconds\n")
-
-  -- Export to JSON
-  local export_path = reaper.GetResourcePath() .. "\\rule-of-30-plugins.json"
-  local file = io.open(export_path, "w")
-  if file then
-    file:write("{\n")
-    file:write('  "scan_date": "' .. os.date() .. '",\n')
-    file:write('  "total_plugins": ' .. all_plugins.total .. ',\n')
-    file:write('  "key_plugins": {\n')
-
-    local entries = {}
-    for name, path in pairs(key_plugins) do
-      if path then
-        table.insert(entries, '    "' .. name .. '": "' .. path:gsub("\\", "\\\\") .. '"')
-      end
-    end
-
-    file:write(table.concat(entries, ",\n"))
-    file:write('\n  }\n')
-    file:write("}\n")
-    file:close()
-
-    reaper.ShowConsoleMsg("\n✅ Plugin database exported to: " .. export_path .. "\n")
+  local output_path = join_path(reaper.GetResourcePath(), "rule-of-30-plugins.json")
+  local ok, export_error = exportJSON(output_path, all_plugins, key_plugins, elapsed)
+  if ok then
+    reaper.ShowConsoleMsg("Plugin database exported to: " .. output_path .. "\n")
+  else
+    reaper.ShowConsoleMsg("ERROR: Could not export plugin database: " .. tostring(export_error) .. "\n")
   end
+  return ok
 end
 
+_G.SGMRealPluginScanner = {
+  scanDirectory = scanDirectory,
+  findKeyPlugins = findKeyPlugins,
+  exportJSON = exportJSON,
+  json_string = json_string,
+}
 main()

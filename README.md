@@ -1,74 +1,95 @@
 # reaper-scripts
 
-REAPER ReaScript utilities and AI-workflow helpers by Scott Mills.
+REAPER ReaScripts and Python helpers by Scott Mills. The repository contains file
+scanners, session/routing builders, preset **data**, AAF import code, and a Suno
+project generator. It does not bundle third-party plugins, AI models, project
+templates, or FX-chain files.
 
-## Contents
+## ReaScripts
 
-| File | What it does |
-|------|--------------|
-| `Reaper AI Control Hub.lua` | Plugin discovery, routing templates, and external AI tool launches |
-| `SGM_Professional_Session_Builder.lua` | Builds a full session template (tracks, buses, routing) |
-| `SGM_plugin_development_blueprint.lua` | Plugin development scaffolding helpers |
-| `VALIDATE-ALL-SCRIPTS.lua` | Runs the bundled validation helpers |
-| `list-all-available-plugins.lua` | Lists installed VST/VST3/JSFX plugins |
-| `phase-alignment-tool.lua` | Aligns quad-tracked DI guitars by transient onset |
-| `plugin-wrapper.lua` | Wraps plugin chains for repeatable loading |
-| `reaper-template-installer.lua` | Installs the session template |
-| `rule-of-30-plugin-presets.lua` | Plugin-chain preset library for the Rule of 30 workflow |
-| `scan-real-plugins.lua` | Scans and reports installed plugins |
-| `signal-chain-presets.lua` | Signal-chain preset data |
-| `*.py` (Suno workflow) | Helper scripts for the Suno import/production workflow |
-| `extract_reaper_uuids.py` | Exports the REAPER plugin UUID map to JSON |
+| File | Implemented behavior |
+|------|----------------------|
+| `Reaper AI Control Hub.lua` | Inspects master-track FX for AI/routing tools, writes routing notes, and prints manual external-processing commands |
+| `SGM_Professional_Session_Builder.lua` | Adds full-production, mixing, mastering, or stem-session tracks, stock REAPER FX, and sends to the **current project** |
+| `SGM_plugin_development_blueprint.lua` | Shows a development guide and can create a directory-only scaffold after confirmation; not a buildable plugin generator |
+| `VALIDATE-ALL-SCRIPTS.lua` | Syntax-checks bundled Lua files in the validator's directory |
+| `list-all-available-plugins.lua` | Reads REAPER plugin caches and scans JSFX; writes `plugin_inventory.json` in the resource path |
+| `phase-alignment-tool.lua` | Aligns the first item on selected tracks by transient onset; includes timing comparison and item-nudge actions |
+| `plugin-wrapper.lua` | Scans plugin paths, persists a JSON database, lists track FX, and automates the last touched parameter |
+| `reaper-template-installer.lua` | Copies the bundled scripts/documents into `Scripts/ScottMills`; despite the legacy filename, no project template is installed |
+| `rule-of-30-plugin-presets.lua` | Rule of 30 plugin-chain data and lookup helpers |
+| `scan-real-plugins.lua` | Recursively scans standard OS plugin paths and writes `rule-of-30-plugins.json` in the resource path |
+| `signal-chain-presets.lua` | Signal-chain and routing preset data; does not instantiate plugins by itself |
 
-## Which script do I run?
+### Session-builder safety
 
-Several scripts overlap in purpose; use this to pick:
+The session builder asks for confirmation, preserves existing tracks/items, and
+uses one undo block. “Full Production” creates 25 tracks and 31 sends—not the
+48+ track structure described by older versions of the workflow guide. Routing
+is built from stock tracks and does not require third-party plugins. Missing
+stock FX are reported as warnings.
 
-| Task | Script | Notes |
-|------|--------|-------|
-| Build a full mixing session automatically | `SGM_Professional_Session_Builder.lua` | Analyzes the project and builds tracks/buses/routing |
-| Install the whole template suite once | `reaper-template-installer.lua` | One-time setup into the REAPER resource path |
-| Find which plugins are installed | `scan-real-plugins.lua` | Scans real OS plugin paths, exports JSON |
-| Export the full plugin inventory | `list-all-available-plugins.lua` | Includes JSFX; writes `plugin_inventory.json` |
-| Manage/wrap plugin chains on tracks | `plugin-wrapper.lua` | Keeps a `plugin_database.json` |
-| Discover AI tools / launch external processing | `Reaper AI Control Hub.lua` | Bridges to external AI plugins |
-| Align quad-tracked DI guitars | `phase-alignment-tool.lua` | Transient-onset alignment |
-| Rule of 30 preset chains | `rule-of-30-plugin-presets.lua` + `signal-chain-presets.lua` | Presets data; see `RULE-OF-30-COMPLETE-WORKFLOW.md` |
-| Check scripts for syntax errors | `VALIDATE-ALL-SCRIPTS.lua` | In-REAPER validator |
-| Suno track -> REAPER project | `suno_workflow_helper.py` (see `SUNO_REAPER_WORKFLOW.md`) | Stem separation needs the optional YourMT3 module |
+The installer also asks for confirmation. It replaces only same-named files in
+its destination and never edits the open project, shortcuts, toolbars, or
+preferences. After installation, register scripts through **Actions → Show
+action list → Load ReaScript**.
+
+## Python helpers
+
+| File | Purpose |
+|------|---------|
+| `suno_workflow_helper.py` | Separates stems through an optional external module and generates a five-track RPP with relative media paths |
+| `suno_workflow_config_system.py` | Dataclass configuration, environment overrides, and validation |
+| `suno_workflow_performance_utils.py` | Async executor, batch-copy, memory, and metrics utilities |
+| `plugin-compatibility-system.py` | Plugin SQLite database, filesystem scanner, template checks, and JSON import/export |
+| `reaper_ai_integration.py` | AAF parsing and REAPER AAF import; also exports composition JSON standalone |
+| `extract_reaper_uuids.py` | Converts REAPER's VST cache to `reaper_plugin_map.json` |
+| `suno_workflow_setup.py` / `setup.py` | Setuptools configuration and standard package entry point |
+
+See [`SUNO_REAPER_WORKFLOW.md`](SUNO_REAPER_WORKFLOW.md) for CLI examples and
+limitations. Rule of 30 production notes are in
+[`RULE-OF-30-COMPLETE-WORKFLOW.md`](RULE-OF-30-COMPLETE-WORKFLOW.md).
 
 ## Requirements
 
-- REAPER 7.0+ (Lua 5.4)
-- Python 3.9+ for the `.py` helpers
-  - `reaper_ai_integration.py` runs inside REAPER's Python (needs `aaf2`, `RPR_*`)
-  - `suno_workflow_comprehensive_test_suite.py` needs `pip install numpy soundfile`
-  - `suno_workflow_performance_utils.py` additionally needs `psutil`
-  - Optional, not bundled: `yourmt3_stem_separator`, `batch_process_suno`, `SEMAS`
-- SWS/S&M Extension optional (enables extended routing inspection)
+- REAPER 7.0+ (Lua 5.4) for the ReaScripts.
+- Python 3.9+ for Python helpers.
+- Core test/Suno packages: `python -m pip install -r requirements.txt`.
+- AAF support: `python -m pip install pyaaf2` (the import name is `aaf2`).
+- Optional and **not bundled**: `yourmt3_stem_separator`, `batch_process_suno`,
+  `SEMAS`, third-party plugins, and AI models.
+- SWS is not required for the bundled inventory scanner. Individual user workflows
+  may still choose to install it.
 
-See `AGENTS.md` for the full validation commands. Workflow docs: `SUNO_REAPER_WORKFLOW.md` and `RULE-OF-30-COMPLETE-WORKFLOW.md`. Changes are tracked in `CHANGELOG.md`.
+Install the standalone Suno command with:
 
-> Note: `suno_workflow_setup.py` is a setuptools packaging script for installing the
-> Python helpers as a package; this repo itself is a flat collection of scripts.
+```bash
+python -m pip install .
+suno-workflow --help
+```
 
 ## Validate
 
-CI (`.github/workflows/ci.yml`) runs all of these:
+CI runs Lua 5.4 syntax/smoke checks, focused Lua regressions, Python compilation,
+pyflakes, module tests, and Python/Suno suites:
 
 ```bash
-# Lua 5.4 syntax
-for f in *.lua; do lua5.4 -e "assert(loadfile('$f'))"; done
-
-# Lua smoke-run with stubbed REAPER (catches runtime crashes; timeout = waits on real input)
-for f in *.lua; do timeout 10 lua5.4 tests/lua_smoke.lua "$f"; done
+# Lua syntax and behavior
+for f in *.lua; do lua5.4 -e "assert(loadfile('$f'))" || exit 1; done
+for f in *.lua; do timeout 10 lua5.4 tests/lua_smoke.lua "$f" || exit 1; done
+lua5.4 tests/lua_regression.lua
 
 # Python
 python -m compileall -q .
-python -m pyflakes *.py        # ignore "undefined name 'RPR_*'" (REAPER runtime)
+python -m pyflakes *.py tests/*.py  # ignore only REAPER-injected RPR_* diagnostics
 python test_modules.py
-pip install -r requirements.txt && python suno_workflow_comprehensive_test_suite.py
+python -m unittest discover -s tests -p "test_*.py" -v
+python suno_workflow_comprehensive_test_suite.py
 ```
+
+The stubs and unit tests do not replace an interactive test in REAPER. See
+[`AUDIT.md`](AUDIT.md) for the audit findings, verification record, and remaining
+manual-QA checklist.
 
 ## License
 

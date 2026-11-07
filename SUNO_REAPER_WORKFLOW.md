@@ -1,370 +1,210 @@
-# Suno Track Workflow for Reaper
+# Suno Track Workflow for REAPER
 
-Complete workflow for importing and processing Suno AI-generated tracks in Reaper with advanced stem separation.
+Generate a REAPER project from a Suno audio file and stems produced by an
+optional external `yourmt3_stem_separator` module.
 
-## Overview
+> **Important:** `yourmt3_stem_separator.py`, `batch_process_suno.py`, SEMAS, AI
+> models, and project templates are not bundled. The helper returns a clear error
+> if the separator is unavailable. No separation-quality or GPU-performance
+> claims are made by this repository.
 
-This workflow provides:
+## What the bundled helper does
 
-1. **Advanced Stem Separation** - YourMT3+ transformer-based separation optimized for AI-generated audio
-2. **Reaper Project Templates** - Pre-configured track routing and organization
-3. **Plugin Discovery** - List all available Reaper plugins for your setup
-4. **Automated Workflow** - One-command processing from Suno track to Reaper project
+1. Validates the input file and project name.
+2. Creates a new, empty project directory (and refuses to overwrite a nonempty one).
+3. Calls `YourMT3StemSeparator(output_dir=...).separate(input_file)` and verifies
+   that every returned stem file exists.
+4. Copies the original without changing its codec or filename extension.
+5. Generates a `.rpp` with Vocals, Drums, Bass, Other, and a muted Original Mix
+   reference track. By default, media items reference the stems and original with
+   relative paths.
+6. Writes `IMPORT_INSTRUCTIONS.md` unless disabled in configuration.
+7. Returns a structured failure and exits nonzero on CLI errors.
 
-## Files Included
-
-### Core Scripts
-
-- `suno_workflow_helper.py` - Complete workflow automation
-- `suno_workflow_config_system.py` - Workflow configuration
-- `requirements.txt` - Core Python dependencies (numpy, soundfile, psutil)
-- `requirements_yourmt3.txt` - Optional stem-separation dependencies
-
-> **Note:** `yourmt3_stem_separator.py` (the YourMT3+ stem separation engine) is an
-> **optional external module and is not bundled in this repo**. Stem separation
-> steps are skipped with a clear error unless you install it separately.
-
-### ReaScripts (repo root)
-
-- `list-all-available-plugins.lua` - Lists all installed Reaper plugins
-- `Reaper AI Control Hub.lua` - Plugin discovery and AI tool integration
-
-### Templates
-
-- No `.rpp` template is bundled. `suno_workflow_helper.py` looks for
-  `templates/suno-track-import-template.rpp` and, when absent, generates a basic
-  project file automatically (4 stem tracks + original mix reference + stem bus).
+This is **file generation**, not remote control of a running REAPER instance.
 
 ## Installation
 
-### 1. Install Python Dependencies
+### Python
 
 ```bash
-# Install core dependencies
-pip install -r requirements_yourmt3.txt
-
-# For CUDA GPU acceleration (optional but recommended)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -m pip install -r requirements.txt
 ```
 
-### 2. Install Reaper Scripts
+Install your compatible external YourMT3 separator separately. The optional
+`requirements_yourmt3.txt` lists common torch/audio dependencies, but does not
+install the unbundled separator itself.
 
-Copy the ReaScripts (the `*.lua` files in this repo's root) to your Reaper scripts directory:
+The standalone package can also be installed from the repository root:
 
 ```bash
-# Windows
-copy *.lua "%APPDATA%\REAPER\Scripts\"
-
-# macOS/Linux
-cp *.lua ~/Library/Application\ Support/REAPER/Scripts/
+python -m pip install .
 ```
 
-Then in Reaper:
-- Actions → Show action list → Load ReaScript
-- Select the `.lua` files
+### ReaScripts
 
-## Usage
+Run `reaper-template-installer.lua` inside REAPER, or copy root-level `.lua`
+files to the appropriate directory:
 
-### Quick Start - Automated Workflow
+- Windows: `%APPDATA%\REAPER\Scripts\`
+- macOS: `~/Library/Application Support/REAPER/Scripts/`
+- Linux: `~/.config/REAPER/Scripts/`
 
-Process a Suno track in one command:
+Then use **Actions → Show action list → Load ReaScript**. No SWS extension is
+required for the bundled inventory tool.
+
+## CLI usage
 
 ```bash
-python suno_workflow_helper.py "path/to/your_suno_track.mp3"
+python suno_workflow_helper.py "path/to/track.mp3"
+python suno_workflow_helper.py "track.wav" --name "My Song"
+python suno_workflow_helper.py "track.wav" --output-dir "/path/to/projects"
+python suno_workflow_helper.py "track.wav" --no-auto-import
 ```
 
-This will:
-1. Separate the track into 4 stems (vocals, drums, bass, other)
-2. Create a Reaper project with proper routing
-3. Generate import instructions
-4. Organize everything in a project folder
-
-### Advanced Usage
-
-#### Custom Project Name
+The installed command is equivalent:
 
 ```bash
-python suno_workflow_helper.py "my_track.mp3" --name "My Awesome Project"
+suno-workflow "track.wav" --name "My Song"
 ```
 
-#### Use Custom Template
+### Output layout
+
+For `--output-dir "/projects" --name "My Song"`:
+
+```text
+/projects/My Song/
+├── My Song.rpp
+├── IMPORT_INSTRUCTIONS.md
+├── original_mix.wav                 # extension matches the actual input
+└── stems/
+    ├── vocals.wav                   # names/extensions come from the separator
+    ├── drums.wav
+    ├── bass.wav
+    └── other.wav
+```
+
+If `--output-dir` is omitted, the project folder is created beside the input.
+The CLI also honors `SUNO_OUTPUT_DIR`; the explicit option takes precedence.
+Rerunning with the same nonempty project directory fails rather than overwriting
+media. Choose another name or output root.
+
+### Manual import mode
+
+`--no-auto-import` creates the five tracks without `<ITEM>` media entries and
+writes manual mapping instructions. It does not disable stem separation.
+
+### Custom project file
 
 ```bash
-python suno_workflow_helper.py "my_track.mp3" --template "path/to/custom_template.rpp"
+python suno_workflow_helper.py "track.wav" --template "path/to/custom.rpp"
 ```
 
-#### Manual Stem Separation Only
+A custom template is copied **verbatim** to the new project directory. The helper
+does not inject stems into an arbitrary existing RPP; use the generated import
+instructions. A missing explicit template is an error. The old implicit
+`templates/suno-track-import-template.rpp` path is no longer used because that
+file is not bundled.
 
-```bash
-python yourmt3_stem_separator.py "my_track.mp3" -o "output/folder"
+## Generated project details
+
+- Track 1: Vocals
+- Track 2: Drums
+- Track 3: Bass
+- Track 4: Other (Instruments)
+- Track 5: Original Mix (Reference), muted by default
+
+The basic generator does not create a stem bus, custom colors, or third-party FX.
+Media duration is read with `soundfile` (or Python's WAV reader); if one codec
+cannot be inspected, the common song duration from another generated stem is
+used. Open and save the generated RPP in REAPER before further editing.
+
+## Configuration API
+
+```python
+from suno_workflow_config_system import PathConfig, WorkflowConfig
+from suno_workflow_helper import SunoReaperWorkflow
+
+config = WorkflowConfig(paths=PathConfig(output_dir="/projects"))
+workflow = SunoReaperWorkflow(config=config)
+result = workflow.process_suno_track("track.wav", project_name="Song")
+if not result.success:
+    print(result.error_message)
 ```
 
-#### Select Specific Stems
+Environment overrides:
 
-```bash
-python yourmt3_stem_separator.py "my_track.mp3" -s vocals drums
+| Variable | Values |
+|----------|--------|
+| `SUNO_OUTPUT_DIR` | Root directory for generated project folders |
+| `SUNO_DEVICE` | `auto`, `cpu`, or `cuda` |
+| `SUNO_SAMPLE_RATE` | `44100`, `48000`, or `96000` |
+| `SUNO_ENHANCEMENT_PROFILE` | `minimal`, `balanced`, or `aggressive` |
+| `SUNO_LOG_FILE` | Optional log filename; console-only logging is used when unset |
+
+Model/device and enhancement settings are configuration data passed through the
+workflow; the external separator controls their actual interpretation.
+
+## Plugin inventory
+
+Run `list-all-available-plugins.lua` in REAPER. It scans extensionless and
+`.jsfx` JS effects (excluding `.jsfx-inc` includes) and reads available VST,
+VST3, CLAP, AU, and LV2 cache files. Output is written to:
+
+```text
+<REAPER resource path>/plugin_inventory.json
 ```
 
-#### GPU Acceleration
-
-```bash
-python yourmt3_stem_separator.py "my_track.mp3" --device cuda
-```
-
-### List Available Plugins
-
-In Reaper, run the script: `list-all-available-plugins.lua`
-
-This will:
-- Scan all installed plugins (VST, VST3, JS, CLAP)
-- Display inventory in Reaper console
-- Export to `plugin_inventory.json`
-
-## Workflow Details
-
-### Step 1: Stem Separation
-
-The YourMT3+ separator uses:
-
-- **Transformer architecture** for superior quality
-- **AI-audio preprocessing** to handle AI-generated artifacts:
-  - Spectral cleaning
-  - DC offset removal
-  - Artifact reduction
-- **Enhanced post-processing**:
-  - Stem bleeding reduction
-  - Transient enhancement (drums)
-  - Normalization
-
-### Step 2: Reaper Project Creation
-
-The template includes:
-
-**Track 1: Vocals**
-- Color: Pink/Purple
-- Routed to Stem Bus
-
-**Track 2: Drums**
-- Color: Orange
-- Routed to Stem Bus
-
-**Track 3: Bass**
-- Color: Blue
-- Routed to Stem Bus
-
-**Track 4: Other (Instruments)**
-- Color: Yellow
-- Routed to Stem Bus
-
-**Track 5: Original Mix (Reference)**
-- Color: White
-- Muted by default
-- 50% volume for A/B comparison
-
-**Track 6: Stem Bus**
-- Group processing
-- Routed to Master
-
-### Step 3: Import Stems
-
-After running the workflow:
-
-1. Open the generated `.rpp` project file in Reaper
-2. Drag and drop stems to corresponding tracks:
-   - `vocals.wav` → Track 1
-   - `drums.wav` → Track 2
-   - `bass.wav` → Track 3
-   - `other.wav` → Track 4
-   - `original_mix.wav` → Track 5
-3. Align items to start at 0:00
-4. Start mixing!
-
-## Why YourMT3+ for AI-Generated Audio?
-
-AI-generated audio (like Suno) has unique characteristics:
-
-1. **Compressed dynamic range** - Often heavily compressed/limited
-2. **Spectral artifacts** - AI models can introduce frequency anomalies
-3. **Unnatural transients** - Drum hits and attacks may be unnaturally smooth
-4. **Bleeding** - More challenging source separation
-
-YourMT3+ addresses these with:
-
-- Transformer-based attention mechanisms for better source localization
-- Pre/post-processing optimized for AI audio artifacts
-- Higher overlap ratio for smoother separation
-- Spectral gating to remove AI-specific noise floor
-
-## Mixing Tips for Suno Tracks
-
-### Fixing Common Issues
-
-**Vocals too quiet/loud?**
-- Adjust track volume
-- Add compression to even out dynamics
-- Use vocal rider plugin
-
-**Drums too muddy?**
-- EQ: Cut 200-400 Hz mud
-- Boost 2-5 kHz for clarity
-- Add transient shaper
-
-**Bass lacks punch?**
-- Layer with sub-bass generator
-- Add saturation/distortion
-- Sidechain compress to kick
-
-**Stems have bleed?**
-- Use gates/expanders
-- Apply surgical EQ
-- Re-run separation with higher quality model
-
-### Recommended Plugin Chain
-
-**Vocals:**
-1. De-esser
-2. EQ (cut mud, boost presence)
-3. Compressor (4:1 ratio, medium attack)
-4. Reverb (short room or plate)
-5. Delay (subtle, tempo-synced)
-
-**Drums:**
-1. Transient shaper
-2. EQ (boost kick/snare fundamentals)
-3. Parallel compression
-4. Room reverb (very subtle)
-
-**Bass:**
-1. Low-pass filter (clean up highs)
-2. Saturation/distortion (harmonics)
-3. Compressor (high ratio, fast attack)
-4. Sidechain to kick
-
-**Master Bus:**
-1. EQ (gentle corrections)
-2. Glue compressor (light)
-3. Limiter (catch peaks)
+`scan-real-plugins.lua` is different: it recursively scans standard filesystem
+paths and writes `rule-of-30-plugins.json`. The Python
+`plugin-compatibility-system.py scan` command provides a third, database-oriented
+filesystem scan.
 
 ## Troubleshooting
 
-### Installation Issues
+### “Stem separation requires … yourmt3_stem_separator”
 
-**"No module named 'demucs'"**
+Install the external module in the same Python environment as the helper. The
+repository cannot provide installation instructions for an unbundled fork; check
+that this import works first:
+
 ```bash
-pip install demucs
+python -c "from yourmt3_stem_separator import YourMT3StemSeparator; print('OK')"
 ```
 
-**CUDA out of memory**
+### “Project directory is not empty”
+
+This is overwrite protection. Use another `--name` or `--output-dir`; do not
+delete a project unless you have a backup.
+
+### “Separated stem was not created”
+
+The separator returned a path that does not exist. Check its output directory,
+relative-path behavior, logs, disk space, and supported input codecs.
+
+### Project opens without expected media
+
+Confirm that the generated `stems/` directory moved with the RPP, review the
+relative `FILE` paths, and use REAPER's missing-media search. Projects made with
+`--no-auto-import` intentionally contain empty tracks. Custom templates are
+intentionally copied unchanged.
+
+### AAF import
+
+`reaper_ai_integration.py` is separate from the Suno workflow. Install `pyaaf2`
+and run it inside REAPER for project construction, or standalone with an `.aaf`
+argument to print composition JSON. AAF variations still require testing with
+your source DAW and REAPER version.
+
+## Validation
+
 ```bash
-# Use CPU instead
-python yourmt3_stem_separator.py file.mp3 --device cpu
+python test_modules.py
+python -m unittest discover -s tests -p "test_*.py" -v
+python suno_workflow_comprehensive_test_suite.py
 ```
 
-### Separation Quality Issues
+Optional YourMT3/batch/SEMAS tests are reported as skipped when those modules
+are absent; skipped tests are not counted as passes.
 
-**Poor separation quality**
-- Try different model: `--model htdemucs_ft`
-- Ensure input is high quality (320kbps MP3 or WAV)
-- Check for clipping in original file
-
-**Stems don't align**
-- Verify all stems are same sample rate
-- Re-export from separator
-- Use Reaper's automatic item alignment
-
-**Artifacts in stems**
-- Try re-running with different settings
-- Apply noise reduction in Reaper
-- Use spectral editing tools
-
-### Reaper Issues
-
-**Template doesn't load**
-- Check file path is correct
-- Ensure Reaper version compatibility (7.0+)
-- Use basic project mode: `--no-auto-import`
-
-**Can't find plugins**
-- Run plugin rescan in Reaper
-- Check plugin paths in Preferences
-- Use `list-all-available-plugins.lua` to verify
-
-## Advanced Configuration
-
-### Custom Separation Settings
-
-Edit `yourmt3_stem_separator.py` to modify:
-
-```python
-self.ai_audio_config = {
-    'apply_spectral_cleaning': True,
-    'enhance_transients': True,
-    'artifact_reduction': True,
-    'overlap_ratio': 0.5,  # Higher = better quality, slower
-    'chunk_size': 10.0     # Chunk size in seconds
-}
-```
-
-### Custom Template
-
-Create your own template:
-
-1. Set up tracks in Reaper as desired
-2. Save as `.rpp` template
-3. Use with: `--template path/to/template.rpp`
-
-## Performance
-
-### Processing Times (approximate)
-
-**CPU (Intel i7):**
-- 3-minute track: ~5-8 minutes
-
-**GPU (NVIDIA RTX 3080):**
-- 3-minute track: ~1-2 minutes
-
-### Quality Comparison
-
-| Model | Quality | Speed | Best For |
-|-------|---------|-------|----------|
-| htdemucs | High | Medium | General use |
-| htdemucs_ft | Highest | Slow | Final production |
-| demucs | Medium | Fast | Quick previews |
-
-## Integration with SEMAS
-
-This workflow can be integrated with the existing SEMAS system:
-
-```python
-from yourmt3_stem_separator import YourMT3StemSeparator
-
-# In SEMAS agent
-separator = YourMT3StemSeparator(output_dir="SEMAS/output/stems")
-stems = separator.separate("input.wav")
-```
-
-## Credits & References
-
-- **Demucs**: Facebook Research
-- **YourMT3+**: Transformer-based music transcription
-- **SEMAS**: Smart Enhancement & Mastering Automation System
-
-## Support
-
-For issues or questions:
-
-1. Check the `IMPORT_INSTRUCTIONS.md` in your project folder
-2. Review this guide
-3. Check Reaper console for error messages
-4. Verify all dependencies are installed
-
-## License
-
-This workflow is provided as-is for use with Reaper and Suno-generated content.
-Respect copyright and licensing of all models and plugins used.
-
----
-
-**Version**: 1.0
-**Updated**: 2026-01-18
-**Compatible with**: Reaper 7.0+, Python 3.8+
+**Compatible with:** REAPER 7.0+, Python 3.9+

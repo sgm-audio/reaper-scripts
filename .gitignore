@@ -1,6 +1,13 @@
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Local databases, logs, and generated scanner output
+plugin_compatibility.db
 test_plugin.db
 suno_workflow.log
+reaper_plugin_map.json
 reaper.GetProjectPath*

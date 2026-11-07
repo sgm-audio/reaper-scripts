@@ -50,7 +50,7 @@ local function findFirstTransient(item)
   local sample_rate = reaper.GetMediaSourceSampleRate(source)
   local num_channels = reaper.GetMediaSourceNumChannels(source)
 
-  if num_channels == 0 then return nil end
+  if not sample_rate or sample_rate <= 0 or not num_channels or num_channels == 0 then return nil end
 
   -- Get audio accessor
   local accessor = reaper.CreateTakeAudioAccessor(take)
@@ -70,25 +70,27 @@ local function findFirstTransient(item)
     audio_buffer
   )
 
-  -- Find first peak above threshold
-  local transient_sample = nil
+  -- GetAudioAccessorSamples returns frames, while the buffer is interleaved.
+  -- Check every channel and convert the frame index (not scalar index) to time.
+  local transient_frame = nil
   local peak_value = 0
-
-  for i = 1, samples_read do
-    local sample_value = math.abs(audio_buffer[i])
-
-    if sample_value > CONFIG.transient_threshold then
-      transient_sample = i
-      break
+  for frame = 0, samples_read - 1 do
+    for channel = 0, num_channels - 1 do
+      local buffer_index = frame * num_channels + channel + 1
+      local sample_value = math.abs(audio_buffer[buffer_index])
+      peak_value = math.max(peak_value, sample_value)
+      if sample_value > CONFIG.transient_threshold then
+        transient_frame = frame
+        break
+      end
     end
-
-    peak_value = math.max(peak_value, sample_value)
+    if transient_frame then break end
   end
 
   reaper.DestroyAudioAccessor(accessor)
 
-  if transient_sample then
-    local transient_time = start_time + (transient_sample / sample_rate)
+  if transient_frame then
+    local transient_time = start_time + (transient_frame / sample_rate)
     return transient_time, peak_value
   else
     return nil, peak_value
@@ -105,8 +107,6 @@ end
 -- ===================================
 
 local function alignSelectedTracks()
-  reaper.Undo_BeginBlock()
-
   local tracks = getSelectedTracks()
 
   if #tracks < 2 then
@@ -148,7 +148,7 @@ local function alignSelectedTracks()
           earliest_transient = transient_time
         end
       else
-        reaper.ShowConsoleMsg(string.format("  Track %d (%s): No transient found (increase threshold?)\n",
+        reaper.ShowConsoleMsg(string.format("  Track %d (%s): No transient found (try lowering the threshold)\n",
           i, track_name))
       end
     else
@@ -163,6 +163,7 @@ local function alignSelectedTracks()
   end
 
   -- Step 2: Align all tracks to the earliest transient
+  reaper.Undo_BeginBlock()
   reaper.ShowConsoleMsg("\n=== ALIGNING TRACKS ===\n")
   reaper.ShowConsoleMsg("Reference time: " .. string.format("%.4fs", earliest_transient) .. "\n\n")
 
@@ -195,7 +196,7 @@ end
 -- ===================================
 
 local function analyzePhaseCorrelation()
-  reaper.ShowConsoleMsg("=== PHASE CORRELATION ANALYZER ===\n\n")
+  reaper.ShowConsoleMsg("=== ITEM TIMING ALIGNMENT ANALYZER ===\n\n")
 
   local tracks = getSelectedTracks()
 
@@ -286,14 +287,12 @@ end
 
 local function showMenu()
   local menu = "Phase Alignment Tool|"
-  menu = menu .. "#1. Auto-Align Selected Tracks (Quad-Track Guitar)|"
-  menu = menu .. "#2. Analyze Phase Correlation (2 tracks)|"
-  menu = menu .. "|"
-  menu = menu .. "#Nudge Left 1ms|"
-  menu = menu .. "#Nudge Right 1ms|"
-  menu = menu .. "#Nudge Left 0.1ms (fine)|"
-  menu = menu .. "#Nudge Right 0.1ms (fine)|"
-  menu = menu .. "|"
+  menu = menu .. "1. Auto-Align Selected Tracks (Quad-Track Guitar)|"
+  menu = menu .. "2. Analyze Item Timing Difference (2 tracks)|"
+  menu = menu .. "Nudge Left 1ms|"
+  menu = menu .. "Nudge Right 1ms|"
+  menu = menu .. "Nudge Left 0.1ms (fine)|"
+  menu = menu .. "Nudge Right 0.1ms (fine)|"
   menu = menu .. "Settings..."
 
   gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y

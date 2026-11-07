@@ -16,14 +16,12 @@ from unittest.mock import patch
 import numpy as np
 import soundfile as sf
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path and resolve fixtures independently of the cwd.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
 
 # Configure logging for tests
 logging.basicConfig(level=logging.WARNING)
-
-# Configure logging for tests
-logging.basicConfig(level=logging.WARNING)  # Reduce noise during tests
 
 
 import importlib.util
@@ -62,6 +60,19 @@ class TestSunoWorkflowHelper(unittest.TestCase):
         sf.write(file_path, stereo_audio, sample_rate)
         return file_path
 
+    def mock_stem_separation(self, mock_separator, project_dir):
+        """Return real media files from the mocked separator."""
+        def separate(_):
+            stems_dir = os.path.join(project_dir, "stems")
+            os.makedirs(stems_dir, exist_ok=True)
+            paths = {}
+            for name in ("vocals", "drums", "bass", "other"):
+                path = os.path.join(stems_dir, f"{name}.wav")
+                sf.write(path, np.zeros((441, 2), dtype=np.float32), 44100)
+                paths[name] = path
+            return paths
+        mock_separator.return_value.separate.side_effect = separate
+
     @patch("suno_workflow_helper.YourMT3StemSeparator")
     def test_workflow_initialization(self, mock_separator):
         """Test workflow initialization"""
@@ -69,23 +80,14 @@ class TestSunoWorkflowHelper(unittest.TestCase):
 
         self.assertIsNotNone(workflow)
         self.assertIsNotNone(workflow.config)
-        self.assertIsNotNone(workflow.config.template_path)
-        self.assertTrue(
-            os.path.exists(workflow.config.template_path)
-            or "template" in workflow.config.template_path
-        )
+        self.assertIsNone(workflow.config.template_path)
 
     @patch("suno_workflow_helper.YourMT3StemSeparator")
     def test_process_suno_track_success(self, mock_separator):
         """Test successful Suno track processing"""
-        # Mock the separator
-        mock_instance = mock_separator.return_value
-        mock_instance.separate.return_value = {
-            "vocals": "/fake/vocals.wav",
-            "drums": "/fake/drums.wav",
-            "bass": "/fake/bass.wav",
-            "other": "/fake/other.wav",
-        }
+        self.mock_stem_separation(
+            mock_separator, os.path.join(self.test_dir, "test_project")
+        )
 
         workflow = __import__("suno_workflow_helper").SunoReaperWorkflow()
 
@@ -98,6 +100,11 @@ class TestSunoWorkflowHelper(unittest.TestCase):
         self.assertTrue(os.path.exists(result.project_dir))
         self.assertTrue(os.path.exists(result.project_file))
         self.assertEqual(len(result.stem_paths), 4)
+        with open(result.project_file, encoding="utf-8") as project:
+            content = project.read()
+        self.assertIn('<SOURCE WAVE', content)
+        self.assertIn('FILE "stems/vocals.wav"', content)
+        self.assertIn('B_MUTE 1', content)
 
     def test_process_nonexistent_file(self):
         """Test handling of nonexistent file"""
@@ -111,12 +118,10 @@ class TestSunoWorkflowHelper(unittest.TestCase):
     @patch("suno_workflow_helper.YourMT3StemSeparator")
     def test_project_name_generation(self, mock_separator):
         """Test automatic project name generation"""
-        mock_separator.return_value.separate.return_value = {
-            "vocals": "/fake/vocals.wav",
-            "drums": "/fake/drums.wav",
-            "bass": "/fake/bass.wav",
-            "other": "/fake/other.wav",
-        }
+        self.mock_stem_separation(
+            mock_separator,
+            os.path.join(self.test_dir, "my_track_reaper_project"),
+        )
         workflow = __import__("suno_workflow_helper").SunoReaperWorkflow()
 
         test_file = self.create_test_audio("my_track.mp3")
@@ -131,7 +136,8 @@ class TestSunoWorkflowHelper(unittest.TestCase):
         stem_paths = {"vocals": "/fake/vocals.wav", "drums": "/fake/drums.wav"}
 
         project_file = workflow._create_reaper_project(
-            self.test_dir, "test_project", stem_paths, "/fake/original.wav"
+            self.test_dir, "test_project", stem_paths, "/fake/original.wav",
+            auto_import=False,
         )
 
         self.assertTrue(project_file.endswith(".rpp"))
@@ -425,22 +431,19 @@ class TestSEMASIntegration(unittest.TestCase):
         except ImportError as e:
             self.fail(f"SEMAS API import failed: {e}")
 
-    @unittest.skipIf(not os.path.exists("SEMAS"), "SEMAS module not found")
+    @unittest.skipIf(not os.path.exists(os.path.join(ROOT, "SEMAS")), "SEMAS module not found")
     def test_semas_functionality(self):
         """Test basic SEMAS functionality"""
         try:
             # Run SEMAS tests
             result = subprocess.run(
-                ["python", "SEMAS/test_imports.py"],
+                [sys.executable, os.path.join(ROOT, "SEMAS", "test_imports.py")],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
 
-            # Should not crash
-            self.assertTrue(
-                result.returncode in [0, 1]
-            )  # 0=success, 1=graceful failure
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         except subprocess.TimeoutExpired:
             self.fail("SEMAS test timed out")
@@ -471,7 +474,7 @@ def run_integration_tests():
 
     # Test AGENTS.md file exists
     print("\n2. Checking documentation...")
-    if os.path.exists("AGENTS.md"):
+    if os.path.exists(os.path.join(ROOT, "AGENTS.md")):
         print("   [OK] AGENTS.md documentation exists")
     else:
         print("   [FAIL] AGENTS.md documentation missing")
@@ -481,7 +484,7 @@ def run_integration_tests():
     print("\n3. Checking requirements files...")
     req_files = ["requirements.txt", "requirements_yourmt3.txt"]
     for req_file in req_files:
-        if os.path.exists(req_file):
+        if os.path.exists(os.path.join(ROOT, req_file)):
             print(f"   [OK] {req_file} exists")
         else:
             print(f"   [FAIL] {req_file} missing")
@@ -522,9 +525,10 @@ def main():
     total_tests = unit_test_result.testsRun
     failures = len(unit_test_result.failures)
     errors = len(unit_test_result.errors)
-    passed = total_tests - failures - errors
+    skipped = len(unit_test_result.skipped)
+    passed = total_tests - failures - errors - skipped
 
-    print(f"Unit Tests: {passed}/{total_tests} passed")
+    print(f"Unit Tests: {passed} passed, {skipped} skipped, {total_tests} total")
     print(f"Failures: {failures}, Errors: {errors}")
 
     if integration_result:
@@ -535,8 +539,9 @@ def main():
     success = failures == 0 and errors == 0 and integration_result
 
     if success:
-        print("\n*** ALL TESTS PASSED! ***")
-        print("The Suno Reaper Workflow system is ready for use.")
+        print("\n*** ALL AVAILABLE TESTS PASSED! ***")
+        if skipped:
+            print(f"{skipped} optional-integration tests were skipped, not passed.")
         return 0
     else:
         print("\n*** SOME TESTS FAILED ***")

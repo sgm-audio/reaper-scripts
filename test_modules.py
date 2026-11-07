@@ -1,158 +1,115 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Test script for REAPER Template System
-Verifies all modules are functional
-"""
+"""Smoke tests for the actual importable modules in this checkout."""
 
-import sys
+import importlib
+import importlib.util
 import os
+import sys
+import tempfile
+import traceback
+
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 
 def test_ai_integration():
-    """Test AI integration module"""
-    print("Testing AI Integration Module...")
+    print("Testing AAF / REAPER integration module...")
     try:
-        root = os.path.dirname(os.path.abspath(__file__))
-        sys.path.insert(0, root)
-
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "ai_integration_module",
-            os.path.join(root, 'reaper_ai_integration.py')
-        )
-        ai_module = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(ai_module)
-        except ModuleNotFoundError as e:
-            if e.name in ('aaf2', 'reaper'):
-                print(f"  [SKIP] Requires REAPER runtime (missing module: {e.name})")
-                return True
-            raise
-
-        import numpy as np
-
-        # Test basic initialization
-        ai_module.AIProductionSystem()
-        print("  [OK] AIProductionSystem initialized")
-
-        # Test audio analysis
-        test_project = {
-            'tracks': [],
-            'master_bus_audio': np.random.randn(48000, 2) * 0.1,
-            'sample_rate': 48000
-        }
-
-        result = ai_module.analyze_project(test_project)
-        print("  [OK] Project analysis completed")
-        print(f"  [OK] Analysis keys: {list(result.keys())}")
-
+        module = importlib.import_module("reaper_ai_integration")
+        assert module.AAFInterface is not None
+        assert module.ReaperInterface is not None
+        assert module.UserInteraction is not None
+        assert module.have_reaper is False, "Test process must not masquerade as REAPER"
+        interface = module.AAFInterface()
+        interface.close()  # Closing an unopened interface must be safe.
+        print("  [OK] Public interfaces imported; standalone runtime detected")
+        if module.aaf2 is None:
+            print("  [INFO] pyaaf2 is optional and not installed")
+        else:
+            print("  [OK] pyaaf2 is installed")
         return True
-    except Exception as e:
-        print(f"  [FAIL] Error: {e}")
-        import traceback
+    except Exception:
         traceback.print_exc()
         return False
+
 
 def test_plugin_compatibility():
-    """Test plugin compatibility system"""
-    print("\nTesting Plugin Compatibility System...")
+    print("\nTesting plugin compatibility system...")
+    # Hyphens require a file-based import rather than normal module syntax.
+    spec = importlib.util.spec_from_file_location(
+        "plugin_compatibility_system",
+        os.path.join(ROOT, "plugin-compatibility-system.py"),
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
     try:
-        root = os.path.dirname(os.path.abspath(__file__))
-        sys.path.insert(0, root)
-
-        # Import with hyphen in filename
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "plugin_compatibility_system",
-            os.path.join(root, 'plugin-compatibility-system.py')
-        )
-        plugin_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(plugin_module)
-
-        # Test database initialization
-        plugin_module.PluginDatabase("test_plugin.db")
-        print("  [OK] Plugin database initialized")
-
-        # Test plugin scanner
-        scanner = plugin_module.PluginScanner()
-        print("  [OK] Plugin scanner initialized")
-        print(f"  [OK] Scan paths: {len(scanner.plugin_paths)} paths")
-
-        # Cleanup
-        if os.path.exists("test_plugin.db"):
-            os.remove("test_plugin.db")
-
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "plugins.db")
+            database = module.PluginDatabase(db_path)
+            assert database.find_plugin("ReaEQ").plugin_id == "rea_eq"
+            initial = database.get_alternatives("rea_eq")
+            module.PluginDatabase(db_path)
+            assert database.get_alternatives("rea_eq") == initial, (
+                "Repeated initialization duplicated alternatives"
+            )
+            scanner = module.PluginScanner()
+            assert isinstance(scanner.scan_plugins(), dict)
+        print("  [OK] Database persistence, idempotence, and scanner")
         return True
-    except Exception as e:
-        print(f"  [FAIL] Error: {e}")
-        import traceback
+    except Exception:
         traceback.print_exc()
         return False
 
-def test_template_validator():
-    """Test template validator"""
-    print("\nTesting Template Validator...")
+
+def test_suno_configuration():
+    print("\nTesting Suno configuration...")
     try:
-        root = os.path.dirname(os.path.abspath(__file__))
-        sys.path.insert(0, root)
-
-        validator_path = os.path.join(root, 'template-validator.py')
-        if not os.path.exists(validator_path):
-            print("  [SKIP] template-validator.py not present in this checkout")
-            return True
-
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "template_validator",
-            validator_path
-        )
-        template_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(template_module)
-
-        # Test validator initialization
-        template_module.TemplateValidator(os.path.dirname(__file__))
-        print("  [OK] Template validator initialized")
-
+        config_module = importlib.import_module("suno_workflow_config_system")
+        first = config_module.WorkflowConfig()
+        second = config_module.WorkflowConfig()
+        assert first.paths.audio_extensions is not second.paths.audio_extensions
+        first.paths.audio_extensions.append(".test")
+        assert ".test" not in second.paths.audio_extensions
+        relative = config_module.PathConfig(output_dir="relative-output")
+        assert config_module.validate_config(
+            config_module.WorkflowConfig(paths=relative)
+        ) == []
+        print("  [OK] Independent defaults and relative output paths")
         return True
-    except Exception as e:
-        print(f"  [FAIL] Error: {e}")
-        import traceback
+    except Exception:
         traceback.print_exc()
         return False
+
 
 def main():
-    """Run all tests"""
     print("=" * 60)
-    print("REAPER Template System - Module Tests")
+    print("REAPER Scripts - Module Tests")
     print("=" * 60)
-
+    tests = [
+        ("AAF Integration", test_ai_integration),
+        ("Plugin Compatibility", test_plugin_compatibility),
+        ("Suno Configuration", test_suno_configuration),
+    ]
     results = []
+    for name, test in tests:
+        try:
+            result = test()
+        except Exception:
+            traceback.print_exc()
+            result = False
+        results.append((name, result))
 
-    # Run tests
-    results.append(("AI Integration", test_ai_integration()))
-    results.append(("Plugin Compatibility", test_plugin_compatibility()))
-    results.append(("Template Validator", test_template_validator()))
-
-    # Print summary
     print("\n" + "=" * 60)
-    print("Test Summary:")
-    print("=" * 60)
-
-    passed = sum(1 for _, result in results if result)
-    total = len(results)
-
     for name, result in results:
-        status = "[PASSED]" if result else "[FAILED]"
-        print(f"{name}: {status}")
+        print(f"{name}: {'[PASSED]' if result else '[FAILED]'}")
+    passed = sum(result for _, result in results)
+    print(f"Total: {passed}/{len(results)} tests passed")
+    return 0 if passed == len(results) else 1
 
-    print(f"\nTotal: {passed}/{total} tests passed")
-
-    if passed == total:
-        print("\n[SUCCESS] All modules are functional!")
-        return 0
-    else:
-        print(f"\n[FAILURE] {total - passed} module(s) failed")
-        return 1
 
 if __name__ == "__main__":
     sys.exit(main())

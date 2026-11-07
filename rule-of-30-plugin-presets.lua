@@ -414,7 +414,7 @@ function findPlugin(track, plugin_name)
 
   for i = 0, fx_count - 1 do
     local _, fx_name = reaper.TrackFX_GetFXName(track, i, "")
-    if fx_name:lower():find(plugin_name:lower()) then
+    if fx_name:lower():find(plugin_name:lower(), 1, true) then
       return i
     end
   end

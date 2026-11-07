@@ -7,8 +7,10 @@ import asyncio
 import time
 import functools
 import logging
+import math
 import os
 import shutil
+import uuid
 from typing import Callable, Any, Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -41,7 +43,8 @@ class PerformanceMonitor:
 
     def start_monitoring(self, operation_name: str) -> str:
         """Start monitoring an operation"""
-        monitor_id = f"{operation_name}_{int(time.time() * 1000)}"
+        # Millisecond timestamps collide when operations start together.
+        monitor_id = f"{operation_name}_{uuid.uuid4().hex}"
         self.metrics[monitor_id] = PerformanceMetrics(
             start_time=time.time(),
             memory_usage_mb=self.process.memory_info().rss / 1024 / 1024,
@@ -75,7 +78,9 @@ class PerformanceMonitor:
         """Get metrics for operations"""
         if operation_name:
             return [
-                m for mid, m in self.metrics.items() if mid.startswith(operation_name)
+                m
+                for mid, m in self.metrics.items()
+                if mid.rsplit("_", 1)[0] == operation_name
             ]
         return list(self.metrics.values())
 
@@ -87,9 +92,10 @@ class PerformanceMonitor:
 
         total_duration = sum(m.duration for m in metrics if m.duration)
         total_operations = sum(m.operations_completed for m in metrics)
-        avg_memory = sum(m.memory_usage_mb for m in metrics if m.memory_usage_mb) / len(
-            metrics
-        )
+        memory_samples = [
+            m.memory_usage_mb for m in metrics if m.memory_usage_mb is not None
+        ]
+        avg_memory = sum(memory_samples) / len(memory_samples) if memory_samples else 0.0
 
         print("\n" + "=" * 60)
         print("Performance Summary")
@@ -125,7 +131,10 @@ def monitor_performance(operation_name: Optional[str] = None):
                 return result
             except Exception:
                 if monitor_id in performance_monitor.metrics:
-                    performance_monitor.metrics[monitor_id].operations_failed += 1
+                    metrics = performance_monitor.stop_monitoring(
+                        monitor_id, operations_completed=0
+                    )
+                    metrics.operations_failed += 1
                 raise
 
         @functools.wraps(func)
@@ -139,7 +148,10 @@ def monitor_performance(operation_name: Optional[str] = None):
                 return result
             except Exception:
                 if monitor_id in performance_monitor.metrics:
-                    performance_monitor.metrics[monitor_id].operations_failed += 1
+                    metrics = performance_monitor.stop_monitoring(
+                        monitor_id, operations_completed=0
+                    )
+                    metrics.operations_failed += 1
                 raise
 
         # Return appropriate wrapper based on function type
@@ -156,20 +168,24 @@ class AsyncProcessor:
 
     def __init__(self, max_workers: Optional[int] = None):
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+        if self.max_workers < 1:
+            raise ValueError("max_workers must be at least 1")
         self.thread_executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self.process_executor = ProcessPoolExecutor(
             max_workers=min(4, os.cpu_count() or 1)
         )
 
     async def run_cpu_bound(self, func: Callable, *args, **kwargs) -> Any:
-        """Run CPU-bound function in process pool"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.process_executor, func, *args, **kwargs)
+        """Run a CPU-bound function in the process pool, including keyword args."""
+        loop = asyncio.get_running_loop()
+        call = functools.partial(func, *args, **kwargs)
+        return await loop.run_in_executor(self.process_executor, call)
 
     async def run_io_bound(self, func: Callable, *args, **kwargs) -> Any:
-        """Run I/O-bound function in thread pool"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.thread_executor, func, *args, **kwargs)
+        """Run an I/O-bound function in the thread pool, including keyword args."""
+        loop = asyncio.get_running_loop()
+        call = functools.partial(func, *args, **kwargs)
+        return await loop.run_in_executor(self.thread_executor, call)
 
     async def process_batch(
         self,
@@ -179,6 +195,8 @@ class AsyncProcessor:
         use_processes: bool = False,
     ) -> List[Any]:
         """Process items in batches for better resource utilization"""
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
         results = []
         executor = self.process_executor if use_processes else self.thread_executor
 
@@ -186,8 +204,8 @@ class AsyncProcessor:
             batch = items[i : i + batch_size]
             batch_tasks = []
 
+            loop = asyncio.get_running_loop()
             for item in batch:
-                loop = asyncio.get_event_loop()
                 task = loop.run_in_executor(executor, processor, item)
                 batch_tasks.append(task)
 
@@ -212,21 +230,37 @@ class AsyncProcessor:
         """Map processor to items with controlled concurrency"""
         if max_concurrent is None:
             max_concurrent = self.max_workers
+        if max_concurrent < 1:
+            raise ValueError("max_concurrent must be at least 1")
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def process_with_semaphore(item):
             async with semaphore:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(self.thread_executor, processor, item)
 
         tasks = [process_with_semaphore(item) for item in items]
         return await asyncio.gather(*tasks, return_exceptions=True)
 
+    def close(self, wait: bool = True):
+        """Shut down both executors; safe to call more than once."""
+        self.thread_executor.shutdown(wait=wait)
+        self.process_executor.shutdown(wait=wait)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
     def __del__(self):
-        """Clean up executors"""
-        self.thread_executor.shutdown(wait=True)
-        self.process_executor.shutdown(wait=True)
+        # Destructors may run during interpreter shutdown, when module globals
+        # and executor internals are already partially torn down.
+        try:
+            self.close(wait=False)
+        except Exception:
+            pass
 
 
 class MemoryManager:
@@ -318,17 +352,17 @@ async def batch_file_copy(file_pairs: List[tuple]) -> Dict[str, bool]:
     """Batch copy multiple files concurrently"""
     results = {}
 
-    tasks = []
-    for src, dst in file_pairs:
-        task = async_file_copy(src, dst)
-        tasks.append((f"{src}->{dst}", task))
-
-    for name, task in tasks:
-        try:
-            results[name] = await task
-        except Exception as e:
-            logger.error(f"Batch copy failed for {name}: {e}")
+    names = [f"{src}->{dst}" for src, dst in file_pairs]
+    copies = await asyncio.gather(
+        *(async_file_copy(src, dst) for src, dst in file_pairs),
+        return_exceptions=True,
+    )
+    for name, copied in zip(names, copies):
+        if isinstance(copied, Exception):
+            logger.error(f"Batch copy failed for {name}: {copied}")
             results[name] = False
+        else:
+            results[name] = copied
 
     return results
 
@@ -340,6 +374,12 @@ async def optimize_concurrent_processing(
     batch_size: int = 4,
 ) -> List[Any]:
     """Optimized concurrent processing with memory management"""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    if max_concurrent is not None:
+        if max_concurrent < 1:
+            raise ValueError("max_concurrent must be at least 1")
+        batch_size = min(batch_size, max_concurrent)
 
     # Split into batches for memory efficiency
     batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
@@ -370,12 +410,13 @@ async def optimize_concurrent_processing(
 def get_optimal_chunk_size(
     audio_duration: float, target_chunk_duration: float = 10.0
 ) -> int:
-    """Calculate optimal chunk size for audio processing"""
+    """Return a power-of-two chunk count that covers the full duration."""
+    if target_chunk_duration <= 0:
+        raise ValueError("target_chunk_duration must be positive")
     if audio_duration <= target_chunk_duration:
         return 1
 
-    # Calculate number of chunks, rounding up to nearest power of 2
-    num_chunks = int(audio_duration / target_chunk_duration)
+    num_chunks = math.ceil(audio_duration / target_chunk_duration)
     optimal_chunks = 1
     while optimal_chunks < num_chunks:
         optimal_chunks *= 2

@@ -34,17 +34,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Lua 5.4
         run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Lua regression tests
+        run: lua5.4 tests/lua_regression.lua
       - name: Smoke-run Lua scripts
         run: |
           fail=0
           for f in *.lua; do
             out=$(timeout 10 lua5.4 tests/lua_smoke.lua "$f" 2>&1); rc=$?
-            if [ $rc -eq 2 ]; then
-              echo "RUNTIME ERROR: $f: $out"; fail=1
-            elif [ $rc -eq 124 ]; then
+            if [ $rc -eq 0 ]; then
+              echo "OK: $f: $out"
+            elif [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
               echo "SKIP (waits on REAPER input under stubs): $f"
             else
-              echo "OK: $f"
+              echo "RUNTIME ERROR ($rc): $f: $out"; fail=1
             fi
           done
           exit $fail
@@ -72,7 +74,7 @@ jobs:
       # to be "undefined" to pyflakes outside REAPER.
       - name: Lint Python
         run: |
-          out=$(python -m pyflakes *.py | grep -v "undefined name 'RPR_" || true)
+          out=$(python -m pyflakes *.py tests/*.py | grep -v "undefined name 'RPR_" || true)
           if [ -n "$out" ]; then
             echo "$out"
             exit 1
@@ -90,5 +92,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Module tests
         run: python test_modules.py
+      - name: Regression tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Suno workflow test suite
         run: python suno_workflow_comprehensive_test_suite.py

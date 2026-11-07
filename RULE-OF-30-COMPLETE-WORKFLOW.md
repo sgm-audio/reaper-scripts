@@ -39,8 +39,9 @@ Time Signature: 4/4
 
 **Track Template Prep:**
 1. Run `SGM_Professional_Session_Builder.lua`
-2. Select "Build Complete Session Structure"
-3. Result: 48+ tracks with folders, routing, and color coding
+2. Select "Full Production (25 tracks)" (or the no-FX variant)
+3. Confirm the append operation
+4. Result: 25 tracks, 31 sends, colors, and stock REAPER FX; existing tracks/items are preserved
 
 ### B. Tuning & Calibration
 
@@ -65,7 +66,7 @@ String 6: Bb (116.54 Hz)
 **Run Plugin Scanner:**
 ```lua
 -- Execute this script in REAPER:
-<REAPER resource path>/Scripts/scan-real-plugins.lua
+<REAPER resource path>/Scripts/ScottMills/scan-real-plugins.lua
 ```
 
 **Critical Plugins Checklist:**
@@ -80,56 +81,47 @@ String 6: Bb (116.54 Hz)
 
 ### Step-by-Step Session Build
 
-**Option A: Automated (Recommended)**
-1. Open REAPER
+**Option A: Automated Base Session**
+1. Open and save a REAPER project
 2. Actions → Show action list
 3. Load script: `SGM_Professional_Session_Builder.lua`
-4. Select "Build Complete Session Structure"
-5. Wait for completion message
+4. Select "Full Production (25 tracks)" and confirm
+5. Review the console for any stock-FX warnings
 6. Save project as: `[Band Name] - [Song Title] - Rule of 30.RPP`
 
-**Option B: Manual Template**
+**Option B: Your Own Manual Template**
 1. File → Project Templates → Load template...
-2. Select a project template (no `.rpp` template is bundled with this repo; `SGM_Professional_Session_Builder.lua` builds the session structure directly)
+2. Select one of your project templates (no `.rpp` template is bundled with this repo)
 3. Modify track names and routing as needed
 
 ### Session Structure Verification
 
-Your session should now have:
+The automated full-production option creates this flat 25-track base session:
 
 ```
-📁 DRUMS (Titan Bus) - 12 tracks
-  ├─ Kick (3 tracks: In, Out, Sub)
-  ├─ Snare (4 tracks: Top, Bottom, Sample, Glitch)
-  ├─ Cymbals/OH (5 tracks)
-  └─ Toms (2 tracks)
+INPUTS (6)
+  Drums, Bass, Guitars, Keys, Vocals, FX
 
-📁 BASS ENGINE (Drop Bb) - 4 tracks
-  ├─ Bass DI (Lows <200Hz)
-  ├─ Bass Amp (Mids 200-2k)
-  ├─ Bass Fuzz (Highs >2k)
-  └─ Bass Synth Layer
+INSTRUMENTS (8)
+  Kick Drum, Snare Drum, Hi-Hats, Overheads
+  Bass Guitar, Lead Guitar, Keys, Synths
 
-📁 GUITARS (Wall of Sound) - 12 tracks
-  ├─ Rhythm (Quad-tracked, 4 tracks)
-  └─ Texture (Leads, Scrape, Ambient, 8 tracks)
+BUSSES (6)
+  Drum Bus, Bass Bus, Guitar Bus, Keys Bus, Vocal Bus, FX Bus
 
-📁 GLITCH & ATMOSPHERE - 10 tracks
-  ├─ Industrial FX (3 tracks)
-  └─ Synth Layer (3 tracks)
+PARALLEL (3)
+  Drums Parallel, Bass Parallel, Guitars Parallel
 
-📁 VOCALS (Corrupted Robot) - 12+ tracks
-  ├─ Core (2 tracks: Lead, Double)
-  ├─ Glitch (2 tracks: Demon, Telephonic)
-  ├─ Whispers (2 tracks: L/R)
-  ├─ Screams (3 tracks)
-  └─ Ad-libs (3 tracks)
-
-📁 SEND FX - 5 tracks
-  └─ Reverbs, Delays, Parallel Processing
-
-🎛️ MASTER
+OUTPUT (2)
+  Mix Bus → Master (a normal track routed to REAPER's hardware master)
 ```
+
+Inputs/instruments route to their named bus. Drums, bass, and guitars also have
+-6 dB parallel sends. Routed tracks have their direct master send disabled to
+avoid double routing. The builder does not create folders, the detailed 48+
+track arrangement used by this workflow, third-party chains, kick/bass sidechains, or automation.
+Create those production-specific tracks and routings manually (or save your own
+expanded project as a template) before following the rest of this guide.
 
 ---
 
@@ -235,8 +227,13 @@ Pass 4: Rhythm R2 (Neck pickup OR different guitar, loose feel)
 **Automated Method:**
 1. Select all 4 guitar DI tracks (Rhythm L, R, L2, R2)
 2. Run script: `phase-alignment-tool.lua`
-3. Choose "Auto-Align Selected Tracks"
+3. Choose "1. Auto-Align Selected Tracks (Quad-Track Guitar)"
 4. Check console for results
+
+The tool examines only the first item on each selected track and shifts that item
+so its first detected transient matches the earliest track. It does not calculate
+waveform phase correlation, invert polarity, align every item, or quantize the
+performances. Always check the result by ear.
 
 **Manual Method (if automated fails):**
 1. Zoom way in on first chug
@@ -277,16 +274,14 @@ Pass 4: Rhythm R2 (Neck pickup OR different guitar, loose feel)
 
 ### B. Plugin Chain Application
 
-**Automated Plugin Loading:**
-```lua
--- In SGM_Professional_Session_Builder.lua menu:
-Select option #2: Add Drum Processing Chains
-Select option #3: Add Bass Processing Chains
-Select option #4: Add Guitar Chains
-Select option #5: Add Vocal Chains
-```
+**Plugin Loading:**
+The session builder inserts only stock REAPER FX appropriate to each track type
+(or none with the no-FX option). `rule-of-30-plugin-presets.lua` and
+`signal-chain-presets.lua` are reference data, not one-click installers for the
+third-party chains below. Add the listed third-party plugins manually, substituting
+plugins you actually own.
 
-**Manual Plugin Addition (if needed):**
+**Manual Plugin Addition:**
 
 **Kick Out Example:**
 ```
@@ -306,8 +301,8 @@ Select option #5: Add Vocal Chains
 ### C. Sidechain Compression (The Low-End Protocol)
 
 **Setup:**
-1. Run script menu option #6: "Setup Kick/Bass Sidechain"
-2. Verify routing:
+No bundled script creates this sidechain automatically. Create and verify these
+manual routings:
    - Kick Out → Bass DI (channels 3/4)
    - Kick Out → Bass Synth (channels 3/4)
 

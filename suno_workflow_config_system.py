@@ -3,9 +3,10 @@ Constants and configuration for Suno Reaper Workflow System
 Centralized configuration management for all components
 """
 
+import math
 import os
 from typing import Dict, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -85,8 +86,12 @@ class PathConfig:
     temp_dir: Optional[str] = None
 
     # File extensions
-    audio_extensions: List[str] = None
-    project_extensions: List[str] = None
+    audio_extensions: List[str] = field(
+        default_factory=lambda: [".wav", ".mp3", ".flac", ".m4a", ".ogg"]
+    )
+    project_extensions: List[str] = field(
+        default_factory=lambda: [".rpp", ".als", ".logicx"]
+    )
 
     def __post_init__(self):
         if self.audio_extensions is None:
@@ -100,13 +105,13 @@ class WorkflowConfig:
     """Main workflow configuration"""
 
     # Paths
-    paths: PathConfig = None
+    paths: PathConfig = field(default_factory=PathConfig)
 
     # Audio processing
-    audio: AudioConfig = None
+    audio: AudioConfig = field(default_factory=AudioConfig)
 
     # Models
-    models: ModelConfig = None
+    models: ModelConfig = field(default_factory=ModelConfig)
 
     # Workflow options
     auto_import: bool = True
@@ -242,13 +247,15 @@ def validate_config(config: WorkflowConfig) -> List[str]:
     """Validate configuration and return list of issues"""
     issues = []
 
-    # Check paths
-    if config.paths.output_dir and not os.path.exists(
-        os.path.dirname(config.paths.output_dir)
-    ):
-        issues.append(
-            f"Output directory parent does not exist: {os.path.dirname(config.paths.output_dir)}"
-        )
+    # Check paths. Relative paths have a valid implicit parent (the cwd).
+    if config.paths.output_dir:
+        output_path = os.path.abspath(os.path.expanduser(config.paths.output_dir))
+        if os.path.exists(output_path) and not os.path.isdir(output_path):
+            issues.append(f"Output path is not a directory: {output_path}")
+        elif not os.path.isdir(os.path.dirname(output_path)):
+            issues.append(
+                f"Output directory parent does not exist: {os.path.dirname(output_path)}"
+            )
 
     # Check audio settings
     if config.audio.sample_rate not in [44100, 48000, 96000]:
@@ -256,6 +263,13 @@ def validate_config(config: WorkflowConfig) -> List[str]:
 
     if config.audio.bit_depth not in [16, 24, 32]:
         issues.append(f"Unsupported bit depth: {config.audio.bit_depth}")
+
+    if config.audio.channels < 1:
+        issues.append("Channel count must be at least 1")
+    if not math.isfinite(config.audio.chunk_size) or config.audio.chunk_size <= 0:
+        issues.append("Chunk size must be a positive, finite number")
+    if not 0 <= config.audio.overlap_ratio < 1:
+        issues.append("Overlap ratio must be in the range [0, 1)")
 
     # Check model settings
     if config.models.demucs_model not in ["htdemucs", "mdx", "mdx_extra", "mdx_q"]:
