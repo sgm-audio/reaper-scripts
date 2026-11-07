@@ -11,12 +11,12 @@ templates, or FX-chain files.
 |------|----------------------|
 | `Reaper AI Control Hub.lua` | Inspects master-track FX for AI/routing tools, writes routing notes, and prints manual external-processing commands |
 | `SGM_Professional_Session_Builder.lua` | Adds full-production, mixing, mastering, or stem-session tracks, stock REAPER FX, and sends to the **current project** |
-| `SGM_plugin_development_blueprint.lua` | Shows a development guide and can create a directory-only scaffold after confirmation; not a buildable plugin generator |
+| `SGM_plugin_development_blueprint.lua` | Copies the complete bundled JUCE/CMake project into a saved REAPER project after confirmation; compilation remains a separate documented step |
 | `VALIDATE-ALL-SCRIPTS.lua` | Syntax-checks bundled Lua files in the validator's directory |
 | `list-all-available-plugins.lua` | Reads REAPER plugin caches and scans JSFX; writes `plugin_inventory.json` in the resource path |
 | `phase-alignment-tool.lua` | Aligns the first item on selected tracks by transient onset; includes timing comparison and item-nudge actions |
 | `plugin-wrapper.lua` | Scans plugin paths, persists a JSON database, lists track FX, and automates the last touched parameter |
-| `reaper-template-installer.lua` | Copies the bundled scripts/documents into `Scripts/ScottMills`; despite the legacy filename, no project template is installed |
+| `reaper-template-installer.lua` | Copies the bundled scripts/documents and JUCE source tree into `Scripts/ScottMills`; despite the legacy filename, no project template or compiled plugin is installed |
 | `rule-of-30-plugin-presets.lua` | Rule of 30 plugin-chain data and lookup helpers |
 | `scan-real-plugins.lua` | Recursively scans standard OS plugin paths and writes `rule-of-30-plugins.json` in the resource path |
 | `signal-chain-presets.lua` | Signal-chain and routing preset data; does not instantiate plugins by itself |
@@ -38,7 +38,10 @@ action list → Load ReaScript**.
 
 | File | Purpose |
 |------|---------|
-| `suno_workflow_helper.py` | Separates stems through an optional external module and generates a five-track RPP with relative media paths |
+| `suno_workflow_helper.py` | Uses the bundled separator adapter and generates a five-track RPP with relative media paths |
+| `yourmt3_stem_separator.py` | Compatibility-named Demucs adapter with audio preprocessing; real model execution requires the optional heavy backend |
+| `batch_process_suno.py` | Deterministic directory discovery, serial/parallel per-file isolation, and Markdown batch reports |
+| `SEMAS/` | Bundled local job API/CLI with real PCM-WAV analysis; enhancement/mastering require an external processor and fail honestly |
 | `suno_workflow_config_system.py` | Dataclass configuration, environment overrides, and validation |
 | `suno_workflow_performance_utils.py` | Async executor, batch-copy, memory, and metrics utilities |
 | `plugin-compatibility-system.py` | Plugin SQLite database, filesystem scanner, template checks, and JSON import/export |
@@ -56,8 +59,12 @@ limitations. Rule of 30 production notes are in
 - Python 3.9+ for Python helpers.
 - Core test/Suno packages: `python -m pip install -r requirements.txt`.
 - AAF support: `python -m pip install pyaaf2` (the import name is `aaf2`).
-- Optional and **not bundled**: `yourmt3_stem_separator`, `batch_process_suno`,
-  `SEMAS`, third-party plugins, and AI models.
+- Real stem separation: `python -m pip install -e '.[stem-separation]'` (or
+  `python -m pip install -r requirements_yourmt3.txt`). The separator adapter,
+  batch processor, and SEMAS interfaces are bundled; Demucs, Torch, and model
+  downloads are optional heavy runtime dependencies. Without them, lightweight
+  tests still run and separation returns an actionable error instead of fake stems.
+- Not bundled: third-party plugins, AI models, JUCE, and a C++ toolchain.
 - SWS is not required for the bundled inventory scanner. Individual user workflows
   may still choose to install it.
 
@@ -66,7 +73,31 @@ Install the standalone Suno command with:
 ```bash
 python -m pip install .
 suno-workflow --help
+suno-batch --help
+semas --help
+yourmt3-stems --help
 ```
+
+## Buildable JUCE plugin baseline
+
+[`plugin/`](plugin/) is a complete JUCE 8.0.4/CMake project with VST3 and
+Standalone targets, smoothed gain, bypass, parameter state/automation, an editor,
+and native processing tests. It deliberately contains **no AI inference or CLAP
+implementation**. The blueprint copies these exact sources; it does not compile
+a binary or silently install a plugin.
+
+Install CMake 3.22+, a C++17 compiler, and the platform dependencies listed in
+[`plugin/README.md`](plugin/README.md), then run:
+
+```bash
+cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+cmake --build plugin/build --config Release
+ctest --test-dir plugin/build -C Release --output-on-failure
+```
+
+CMake fetches JUCE at an immutable commit. For an existing JUCE checkout, add
+`-DSGM_JUCE_SOURCE_DIR=/absolute/path/to/JUCE` to the configure command. CI
+builds the VST3, Standalone, and native tests on Linux, Windows, and macOS.
 
 ## Validate
 
@@ -81,11 +112,15 @@ lua5.4 tests/lua_regression.lua
 
 # Python
 python -m compileall -q .
-python -m pyflakes *.py tests/*.py  # ignore only REAPER-injected RPR_* diagnostics
+python -m pyflakes *.py tests/*.py SEMAS/*.py SEMAS/core/*.py  # ignore only injected RPR_* diagnostics
 python test_modules.py
 python -m unittest discover -s tests -p "test_*.py" -v
-python suno_workflow_comprehensive_test_suite.py
+python suno_workflow_comprehensive_test_suite.py  # exactly 23 passed, 0 skipped
 ```
+
+The comprehensive runner fails on any skip: bundled integration modules must not
+silently become “optional” again. Heavy Demucs execution is tested through its
+CLI boundary with fixtures, not represented as a model run.
 
 The stubs and unit tests do not replace an interactive test in REAPER. See
 [`AUDIT.md`](AUDIT.md) for the audit findings, verification record, and remaining

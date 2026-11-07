@@ -191,7 +191,7 @@ class SunoReaperWorkflow:
         return project_dir
 
     def _separate_stems(self, audio_file: str, project_dir: str) -> Dict[str, str]:
-        logger.info("Step 1: separating stems with YourMT3+")
+        logger.info("Step 1: separating stems with the Demucs backend")
         stems_dir = (
             os.path.join(project_dir, "stems")
             if self.config.create_stems_dir
@@ -200,8 +200,9 @@ class SunoReaperWorkflow:
         os.makedirs(stems_dir, exist_ok=True)
         if YourMT3StemSeparator is None:
             raise RuntimeError(
-                "Stem separation requires the optional 'yourmt3_stem_separator' "
-                "module, which is not installed."
+                "The bundled stem separator could not be imported. Reinstall "
+                "the package and its core requirements, then install the "
+                "'.[stem-separation]' extra for real Demucs execution."
             )
 
         separated = YourMT3StemSeparator(output_dir=stems_dir).separate(audio_file)

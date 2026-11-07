@@ -5,6 +5,7 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   lua-syntax:
@@ -74,7 +75,7 @@ jobs:
       # to be "undefined" to pyflakes outside REAPER.
       - name: Lint Python
         run: |
-          out=$(python -m pyflakes *.py tests/*.py | grep -v "undefined name 'RPR_" || true)
+          out=$(python -m pyflakes *.py tests/*.py SEMAS/*.py SEMAS/core/*.py | grep -v "undefined name 'RPR_" || true)
           if [ -n "$out" ]; then
             echo "$out"
             exit 1
@@ -94,5 +95,32 @@ jobs:
         run: python test_modules.py
       - name: Regression tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
-      - name: Suno workflow test suite
+      - name: Suno workflow test suite (23 tests, skips forbidden)
         run: python suno_workflow_comprehensive_test_suite.py
+
+  plugin-build:
+    name: JUCE plugin (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux JUCE dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libasound2-dev libx11-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxcursor-dev libfreetype6-dev \
+            libfontconfig1-dev libgl1-mesa-dev
+      - name: Configure pinned JUCE project
+        run: cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build VST3, Standalone, and native tests
+        run: cmake --build plugin/build --config Release
+      - name: Run native processing tests
+        run: ctest --test-dir plugin/build -C Release --output-on-failure

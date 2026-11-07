@@ -2,13 +2,13 @@
 """Setuptools entry point for the standalone Suno workflow helpers."""
 
 from pathlib import Path
-from setuptools import setup
+from setuptools import find_packages, setup
 
 ROOT = Path(__file__).resolve().parent
 
 setup(
     name="suno-reaper-workflow",
-    version="1.0.0",
+    version="1.1.0",
     author="Scott Mills",
     description="Generate REAPER projects from Suno audio and separated stems",
     long_description=(ROOT / "README.md").read_text(encoding="utf-8"),
@@ -18,16 +18,24 @@ setup(
         "suno_workflow_config_system",
         "suno_workflow_helper",
         "suno_workflow_performance_utils",
+        "yourmt3_stem_separator",
+        "batch_process_suno",
     ],
+    packages=find_packages(include=["SEMAS", "SEMAS.*"]),
     python_requires=">=3.9",
     install_requires=["numpy>=1.21", "soundfile>=0.10", "psutil>=5.8"],
     extras_require={
-        "stem-separation": ["torch", "torchaudio"],
+        "stem-separation": ["demucs>=4.0", "torch", "torchaudio"],
         "aaf": ["pyaaf2>=1.7"],
         "dev": ["pyflakes>=3", "pytest>=7"],
     },
     entry_points={
-        "console_scripts": ["suno-workflow=suno_workflow_helper:main"],
+        "console_scripts": [
+            "suno-workflow=suno_workflow_helper:main",
+            "suno-batch=batch_process_suno:main",
+            "yourmt3-stems=yourmt3_stem_separator:main",
+            "semas=SEMAS.cli:main",
+        ],
     },
     classifiers=[
         "Development Status :: 4 - Beta",

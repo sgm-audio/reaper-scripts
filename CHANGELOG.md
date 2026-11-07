@@ -6,10 +6,21 @@ All notable changes to this repository. Format follows Keep a Changelog.
 
 ### Added
 
-- `tests/lua_regression.lua` with 54 behavioral checks for cache parsing, JSON
-  persistence/escaping, portable bundle paths, session routing, and manifests.
-- `tests/test_regressions.py` with 10 regressions for workflow safety, async
-  kwargs/metrics, scanner bundles, database idempotence/export, and cache CSV.
+- A complete `plugin/` JUCE 8.0.4/CMake baseline with VST3, Standalone, native
+  processing tests, smoothed gain/bypass, parameter state, bus validation, and
+  an editor. The Lua blueprint copies these exact sources transactionally, and
+  the installer carries them without compiling or installing a binary.
+- Bundled `yourmt3_stem_separator.py` (Demucs-backed), `batch_process_suno.py`,
+  and the `SEMAS/` job/API/CLI package. Lightweight interfaces are tested without
+  heavy ML dependencies; missing backends and unsupported SEMAS operations fail
+  honestly. Packaging now includes all three integrations and their commands.
+- Native JUCE build/test CI on Linux, Windows, and macOS.
+- `tests/lua_regression.lua` with 72 behavioral checks for cache parsing, JSON
+  persistence/escaping, portable bundle paths, session routing, manifests, and
+  exact generated-plugin source parity/overwrite protection.
+- Eighteen focused Python regressions for workflow safety, async kwargs/metrics,
+  scanner bundles, database idempotence/export, cache CSV, separator backend
+  boundaries, batch isolation/reporting, and SEMAS job execution.
 - `AUDIT.md` with findings, verification results, output-path review, and the
   remaining interactive REAPER QA checklist.
 - Standard `setup.py` entry point; real package modules, URLs, dependencies, and
@@ -20,6 +31,9 @@ All notable changes to this repository. Format follows Keep a Changelog.
 
 ### Fixed
 
+- All 17 former optional-integration skips are eliminated. The comprehensive
+  suite now requires exactly 23 passes and fails on any skip; the extensionless
+  audio fixture and direct SEMAS test import path were corrected.
 - Suno workflow failures now produce nonzero CLI exits instead of “Success!”;
   `--no-auto-import` is meaningful, configuration is preserved, media items and
   durations are generated, original codecs keep their extension, output roots
@@ -59,7 +73,8 @@ All notable changes to this repository. Format follows Keep a Changelog.
   manually expanded 48+ production session and removes nonexistent menu actions.
 - Lua smoke stubs return realistic scalars and terminate enumeration; CI rejects
   unexpected exit codes and runs focused Python and Lua regressions.
-- Test summaries distinguish optional skips from passes.
+- Test summaries reject skips for bundled integrations instead of treating them
+  as optional successes.
 - Logging is console-only unless `SUNO_LOG_FILE` is explicitly set.
 - Earlier cleanup: pyflakes fixes, `.gitignore`, Linux/macOS scan paths, and
   removal of unrelated `ROADMAP.md` / `peer_review.md`.
