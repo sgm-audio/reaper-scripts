@@ -6,6 +6,10 @@ All notable changes to this repository. Format follows Keep a Changelog.
 
 ### Added
 
+- `yourmt3-stems --download-model` to preload and load-test the real Demucs
+  backend without processing audio. The README now links the official HTDemucs
+  model, YAML/weight downloads, verified size/SHA-256, legacy fallback, cache
+  locations, manual `hf download` alternative, and CPU/GPU setup instructions.
 - A complete `plugin/` JUCE 8.0.4/CMake baseline with VST3, Standalone, native
   processing tests, smoothed gain/bypass, parameter state, bus validation, and
   an editor. The Lua blueprint copies these exact sources transactionally, and
@@ -18,9 +22,9 @@ All notable changes to this repository. Format follows Keep a Changelog.
 - `tests/lua_regression.lua` with 72 behavioral checks for cache parsing, JSON
   persistence/escaping, portable bundle paths, session routing, manifests, and
   exact generated-plugin source parity/overwrite protection.
-- Eighteen focused Python regressions for workflow safety, async kwargs/metrics,
+- Twenty focused Python regressions for workflow safety, async kwargs/metrics,
   scanner bundles, database idempotence/export, cache CSV, separator backend
-  boundaries, batch isolation/reporting, and SEMAS job execution.
+  boundaries/model preloading, batch isolation/reporting, and SEMAS execution.
 - `AUDIT.md` with findings, verification results, output-path review, and the
   remaining interactive REAPER QA checklist.
 - Standard `setup.py` entry point; real package modules, URLs, dependencies, and
@@ -31,6 +35,8 @@ All notable changes to this repository. Format follows Keep a Changelog.
 
 ### Fixed
 
+- Batch discovery/filter tests inspect the processing boundary instead of
+  launching real model downloads when the optional backend happens to be installed.
 - All 17 former optional-integration skips are eliminated. The comprehensive
   suite now requires exactly 23 passes and fails on any skip; the extensionless
   audio fixture and direct SEMAS test import path were corrected.

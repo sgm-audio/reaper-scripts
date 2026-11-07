@@ -14,7 +14,7 @@ import soundfile as sf
 from batch_process_suno import BatchProcessor
 from SEMAS.core.data_structures import JobStatus, SEMASJob
 from SEMAS.core.orchestrator import SEMASOrchestrator
-from yourmt3_stem_separator import YourMT3StemSeparator
+from yourmt3_stem_separator import YourMT3StemSeparator, main as separator_main
 
 
 class SeparatorBackendTests(unittest.TestCase):
@@ -33,6 +33,29 @@ class SeparatorBackendTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "stem-separation"):
                 self.separator.separate(str(self.source))
         self.assertEqual(list((self.root / "stems").glob("*.wav")), [])
+
+    def test_model_download_and_cli(self):
+        container_type = type("BagOfModels", (), {})
+        with patch.object(YourMT3StemSeparator, "_demucs_available", return_value=True), \
+                patch("yourmt3_stem_separator.importlib.import_module") as import_module:
+            import_module.return_value.get_model.return_value = container_type()
+            self.assertEqual(
+                YourMT3StemSeparator.download_model("htdemucs"), "BagOfModels"
+            )
+            import_module.return_value.get_model.assert_called_once_with("htdemucs")
+
+        with patch.object(
+            YourMT3StemSeparator, "download_model", return_value="BagOfModels"
+        ) as download:
+            self.assertEqual(separator_main(["--download-model"]), 0)
+            download.assert_called_once_with("htdemucs")
+
+    def test_model_download_failure_is_actionable(self):
+        with patch.object(YourMT3StemSeparator, "_demucs_available", return_value=True), \
+                patch("yourmt3_stem_separator.importlib.import_module") as import_module:
+            import_module.return_value.get_model.side_effect = OSError("offline")
+            with self.assertRaisesRegex(RuntimeError, "manual cache instructions"):
+                YourMT3StemSeparator.download_model()
 
     def test_demucs_output_discovery_and_selected_stems(self):
         observed = {}

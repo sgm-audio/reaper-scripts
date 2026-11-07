@@ -55,8 +55,11 @@ and Lua 5.4 (via the Lua 5.4 runtime):
 | Python compilation (`compileall`) | Pass |
 | pyflakes | Pass after filtering only REAPER-injected `RPR_*` names |
 | `test_modules.py` | 3/3 pass |
-| Focused Python regressions (`tests/test_*.py`) | 18/18 pass |
+| Focused Python regressions (`tests/test_*.py`) | 20/20 pass |
 | Suno comprehensive suite | 23 pass, 0 skips, 0 failures |
+| Optional backend installation/imports | Demucs 4.1.0, Torch 2.15.0, Torchaudio 2.11.1; `pip check` and adapter metadata pass |
+| Real Demucs runtime architecture smoke | `demucs_unittest` loads as `HDemucs`; code-only check, not pretrained inference |
+| Real `htdemucs` weight download/load | Not completed: both official hosts are blocked by the sandbox; preload exits 1 with actionable network/cache guidance |
 | Lua syntax, all 11 ReaScripts | Pass |
 | Lua smoke, all 11 ReaScripts | Pass |
 | `tests/lua_regression.lua` | 72/72 checks pass |
@@ -65,9 +68,13 @@ and Lua 5.4 (via the Lua 5.4 runtime):
 | JUCE VST3, Standalone, and native tests on Linux/Windows/macOS | Pass in [CI run 42343310696](https://github.com/sgm-audio/reaper-scripts/actions/runs/42343310696) |
 
 The separator, batch processor, and SEMAS modules are now bundled. Their
-lightweight behavior is tested without Demucs/Torch; the Demucs CLI boundary is
-simulated explicitly and no heavy model execution is claimed. Local native
-configuration stops at missing `pkg-config`/JUCE platform headers because the
+lightweight behavior is tested with and without the Demucs/Torch packages; the
+Demucs inference boundary is simulated explicitly and no heavy model execution
+is claimed. The optional backend was installed in an isolated environment and
+its real imports were verified, but official model weights could not be fetched
+from `huggingface.co` or `dl.fbaipublicfiles.com` in this sandbox. The README
+provides verified direct links, checksum, preload command, and cache recovery.
+Local native configuration stops at missing `pkg-config`/JUCE platform headers because the
 sandbox cannot reach Debian repositories, so no local binary is claimed. The
 pinned JUCE VST3, Standalone, and native tests subsequently passed in CI on all
 three desktop platforms; the initial CI runs also caught and fixed missing C
@@ -88,6 +95,7 @@ language enablement and normalized-float unity-gain noise on GCC/Clang.
 | UUID map | Explicit `-o`, otherwise `reaper_plugin_map.json` in the caller's chosen cwd |
 | Plugin compatibility DB | Explicit constructor path, otherwise legacy `plugin_compatibility.db` in cwd (ignored by Git) |
 | External AI renders | No files are created automatically; manual target directory is printed |
+| Demucs model cache | Hugging Face `HF_HOME/hub` or `~/.cache/huggingface/hub`; legacy `TORCH_HOME/hub/checkpoints` or `~/.cache/torch/hub/checkpoints`; never in Git |
 
 ## Remaining limitations and manual QA
 
@@ -108,10 +116,11 @@ following therefore remain **manual integration checks**, not claimed passes:
    REAPER plugin rescan.
 5. **AAF import:** Test linked/embedded essence and automation with AAFs from the
    actual source DAWs. Broad AAF-variant compatibility cannot be proven by stubs.
-6. **Heavy AI/runtime validation:** Install the optional Demucs backend, run a
-   real model on representative audio, and evaluate output quality/performance.
-   Exercise unsupported SEMAS enhancement/mastering requests only with a real
-   external processor. Neither is proven by lightweight fixtures.
+6. **Heavy AI/runtime validation:** On a machine that can reach the official
+   model hosts, run `yourmt3-stems --download-model`, then run real separation
+   on representative audio and evaluate output quality/performance. Exercise
+   unsupported SEMAS enhancement/mastering requests only with a real external
+   processor. Neither is proven by lightweight fixtures or backend imports.
 7. **Plugin host validation:** Using a local build of the CI-verified sources,
    scan the VST3 in REAPER, verify automation/state recall and mono/stereo
    processing, and run the Standalone editor on each target OS. Source/native

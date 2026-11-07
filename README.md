@@ -78,6 +78,92 @@ semas --help
 yourmt3-stems --help
 ```
 
+## Optional Demucs ML backend and model
+
+The `YourMT3StemSeparator` class name is retained for compatibility; the actual
+separator is **Demucs**. Python packages and model weights are not bundled. The
+default `htdemucs` model separates vocals, drums, bass, and other.
+
+### 1. Install the backend
+
+Use an isolated environment so the large Torch dependencies do not alter your
+system Python:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[stem-separation]'
+```
+
+Demucs 4.1 requires Python 3.10 or newer. On Linux, the default PyPI Torch wheel
+can include large CUDA components. For a smaller CPU-only installation or a
+specific CUDA version, install Torch/Torchaudio first using the
+[official PyTorch selector](https://pytorch.org/get-started/locally/), then run
+the `stem-separation` extra above.
+
+Check the code backend:
+
+```bash
+python -c "from yourmt3_stem_separator import YourMT3StemSeparator; print(YourMT3StemSeparator(output_dir='stems').get_model_info())"
+```
+
+`backend_available: True` means the Python backend imports; it does **not** prove
+that model weights have been downloaded. For an offline code-only runtime check,
+`yourmt3-stems --model demucs_unittest --download-model` constructs Demucs's
+built-in test architecture. That check validates Torch/Demucs loading only; it
+is not a pretrained model or a separation-quality test.
+
+### 2. Download and verify the model
+
+The official model is **[adefossez/HTDemucs on Hugging Face](https://huggingface.co/adefossez/HTDemucs)**.
+It is public and does not require a Hugging Face token. Download and load-test it
+with the bundled command:
+
+```bash
+yourmt3-stems --download-model
+# Success ends with: Demucs model 'htdemucs' is available and loadable (BagOfModels).
+```
+
+Demucs 4.1+ tries Hugging Face first, then its legacy torch-hub source. Relevant
+official files are:
+
+- [Model definition (`htdemucs.yaml`)](https://huggingface.co/adefossez/HTDemucs/resolve/main/htdemucs.yaml)
+- [Model weights (`955717e8.safetensors`)](https://huggingface.co/adefossez/HTDemucs/resolve/main/955717e8.safetensors)
+- [Legacy torch-hub weights (`955717e8-8726e21a.th`)](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th)
+
+The verified Hugging Face weight is **84,025,440 bytes** with SHA-256:
+
+```text
+d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd
+```
+
+For a manual Hugging Face download that still populates the correct cache, use
+the `hf` command installed with Demucs 4.1, then perform the load test:
+
+```bash
+hf download adefossez/HTDemucs htdemucs.yaml 955717e8.safetensors
+yourmt3-stems --download-model
+```
+
+Both the YAML definition and safetensors weight are required. Prefer these
+commands over manually inventing Hugging Face cache paths. Caches default to:
+
+- Hugging Face: `~/.cache/huggingface/hub` (override the parent with `HF_HOME`).
+- Legacy torch hub: `~/.cache/torch/hub/checkpoints` (override the parent with
+  `TORCH_HOME`). A manual legacy download belongs at
+  `~/.cache/torch/hub/checkpoints/955717e8-8726e21a.th`.
+
+The download hosts `huggingface.co` and `dl.fbaipublicfiles.com` must be
+reachable. Once the load test succeeds, run real separation with:
+
+```bash
+yourmt3-stems "path/to/track.wav" --device cpu --output "path/to/stems"
+```
+
+Use `--device cuda` only when `torch.cuda.is_available()` is true and the model
+fits in GPU memory. No inference is performed by `--download-model` itself.
+
 ## Buildable JUCE plugin baseline
 
 [`plugin/`](plugin/) is a complete JUCE 8.0.4/CMake project with VST3 and
