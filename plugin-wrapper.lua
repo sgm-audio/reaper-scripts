@@ -17,10 +17,14 @@ else
   SCAN_PATHS = {
     "/Library/Audio/Plug-Ins/VST",
     "/Library/Audio/Plug-Ins/VST3",
-    "/Library/Audio/Plug-Ins/Components",
-    os.getenv("HOME") .. "/Library/Audio/Plug-Ins/VST",
-    os.getenv("HOME") .. "/Library/Audio/Plug-Ins/VST3"
+    "/Library/Audio/Plug-Ins/Components"
   }
+  -- Per-user paths only exist when HOME is set (never on Windows)
+  local home = os.getenv("HOME")
+  if home then
+    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST")
+    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST3")
+  end
 end
 
 -- ===================================

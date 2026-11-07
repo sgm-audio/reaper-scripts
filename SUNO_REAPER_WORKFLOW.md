@@ -15,22 +15,25 @@ This workflow provides:
 
 ### Core Scripts
 
-- `yourmt3_stem_separator.py` - Main stem separation engine using YourMT3+
 - `suno_workflow_helper.py` - Complete workflow automation
-- `requirements_yourmt3.txt` - Python dependencies
+- `suno_workflow_config_system.py` - Workflow configuration
+- `requirements.txt` - Core Python dependencies (numpy, soundfile, psutil)
+- `requirements_yourmt3.txt` - Optional stem-separation dependencies
 
-### ReaScripts
+> **Note:** `yourmt3_stem_separator.py` (the YourMT3+ stem separation engine) is an
+> **optional external module and is not bundled in this repo**. Stem separation
+> steps are skipped with a clear error unless you install it separately.
 
-- `ReaScripts/list-all-available-plugins.lua` - Lists all installed Reaper plugins
-- `ReaScripts/daw-discovery-analyzer.lua` - Comprehensive DAW analysis tool
+### ReaScripts (repo root)
+
+- `list-all-available-plugins.lua` - Lists all installed Reaper plugins
+- `Reaper AI Control Hub.lua` - Plugin discovery and AI tool integration
 
 ### Templates
 
-- `templates/suno-track-import-template.rpp` - Reaper project template with:
-  - 4 stem tracks (Vocals, Drums, Bass, Other)
-  - Original mix reference track (muted)
-  - Stem bus for group processing
-  - Pre-configured routing and colors
+- No `.rpp` template is bundled. `suno_workflow_helper.py` looks for
+  `templates/suno-track-import-template.rpp` and, when absent, generates a basic
+  project file automatically (4 stem tracks + original mix reference + stem bus).
 
 ## Installation
 
@@ -46,14 +49,14 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 ### 2. Install Reaper Scripts
 
-Copy the ReaScripts to your Reaper scripts directory:
+Copy the ReaScripts (the `*.lua` files in this repo's root) to your Reaper scripts directory:
 
 ```bash
 # Windows
-copy ReaScripts\*.lua "%APPDATA%\REAPER\Scripts\"
+copy *.lua "%APPDATA%\REAPER\Scripts\"
 
 # macOS/Linux
-cp ReaScripts/*.lua ~/Library/Application\ Support/REAPER/Scripts/
+cp *.lua ~/Library/Application\ Support/REAPER/Scripts/
 ```
 
 Then in Reaper:

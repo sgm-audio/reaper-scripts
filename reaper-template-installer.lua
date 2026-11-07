@@ -21,6 +21,50 @@ function create_directory(path)
   reaper.RecursiveCreateDirectory(path, 0)
 end
 
+-- Directory containing this script (for resolving bundled files)
+local script_dir = debug.getinfo(1, "S").source:match("@(.+[/\\])") or ""
+
+-- Binary-copy a bundled file into dst_dir; returns true on success
+function copy_file(src_name, dst_dir)
+  local src_path = script_dir .. src_name
+  local src = io.open(src_path, "rb")
+  if not src then
+    msg("WARNING: bundled file not found: " .. src_path)
+    return false
+  end
+  local content = src:read("*a")
+  src:close()
+  local dst = io.open(dst_dir .. src_name, "wb")
+  if not dst then
+    msg("WARNING: could not write: " .. dst_dir .. src_name)
+    return false
+  end
+  dst:write(content)
+  dst:close()
+  return true
+end
+
+-- Write a generated script file to disk
+function save_script(path, content)
+  local f = io.open(path, "wb")
+  if not f then
+    msg("WARNING: could not write: " .. path)
+    return false
+  end
+  f:write(content)
+  f:close()
+  return true
+end
+
+-- Open a URL/file in the system browser
+function open_url(url)
+  if reaper.CF_ShellExecute then
+    reaper.CF_ShellExecute(url)
+  else
+    msg("Open manually: " .. url)
+  end
+end
+
 -- Template Installation Functions
 function install_master_templates()
   msg("Installing Master Templates...")
@@ -153,7 +197,7 @@ function setup_advanced_routing()
   
   -- Setup delay sends  
   create_send("Lead Vox", "Delay 1/8D", -25, "pre")
-  create_send("Lead Vox", "Delay Throw", -inf, "pre") -- For automation
+  create_send("Lead Vox", "Delay Throw", -150, "pre") -- -150 dB = effectively muted floor (no -inf in Lua)
   
   -- Configure parallel compression
   create_parallel_route("Drum Bus", "Drum Para", -6)
@@ -290,7 +334,7 @@ function setup_ai_integration()
   create_directory(ai_path)
   
   -- Install Python scripts
-  copy_file("ai-integration-module.py", ai_path)
+  copy_file("reaper_ai_integration.py", ai_path)
   
   -- Create ReaScript bridge
   local bridge_script = [[
@@ -435,8 +479,14 @@ function main()
   
   for i, step in ipairs(steps) do
     show_progress(i-1, #steps, "Installing " .. step.name .. "...")
-    step.func()
-    show_progress(i, #steps, step.name .. " Complete!")
+    -- pcall per step: one failing step must not abort the whole install
+    local ok, err = pcall(step.func)
+    if ok then
+      show_progress(i, #steps, step.name .. " Complete!")
+    else
+      show_progress(i, #steps, step.name .. " FAILED")
+      msg("ERROR in step '" .. step.name .. "': " .. tostring(err))
+    end
     msg("")
   end
   

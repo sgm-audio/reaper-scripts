@@ -38,7 +38,7 @@ Time Signature: 4/4
 ```
 
 **Track Template Prep:**
-1. Run `rule-of-30-session-builder.lua`
+1. Run `SGM_Professional_Session_Builder.lua`
 2. Select "Build Complete Session Structure"
 3. Result: 48+ tracks with folders, routing, and color coding
 
@@ -83,14 +83,14 @@ String 6: Bb (116.54 Hz)
 **Option A: Automated (Recommended)**
 1. Open REAPER
 2. Actions → Show action list
-3. Load script: `rule-of-30-session-builder.lua`
+3. Load script: `SGM_Professional_Session_Builder.lua`
 4. Select "Build Complete Session Structure"
 5. Wait for completion message
 6. Save project as: `[Band Name] - [Song Title] - Rule of 30.RPP`
 
 **Option B: Manual Template**
 1. File → Project Templates → Load template...
-2. Select: `suno-track-import-template.rpp`
+2. Select a project template (no `.rpp` template is bundled with this repo; `SGM_Professional_Session_Builder.lua` builds the session structure directly)
 3. Modify track names and routing as needed
 
 ### Session Structure Verification
@@ -279,7 +279,7 @@ Pass 4: Rhythm R2 (Neck pickup OR different guitar, loose feel)
 
 **Automated Plugin Loading:**
 ```lua
--- In rule-of-30-session-builder.lua menu:
+-- In SGM_Professional_Session_Builder.lua menu:
 Select option #2: Add Drum Processing Chains
 Select option #3: Add Bass Processing Chains
 Select option #4: Add Guitar Chains
@@ -417,8 +417,7 @@ Select option #5: Add Vocal Chains
 
 ## 6. MASTER BUS PROCESSING
 
-**Refer to separate document:**
-📄 `OZONE-11-MASTER-BUS-GUIDE.md`
+**Refer to:** `signal-chain-presets.lua` for bundled master-bus signal chains (no separate OZONE guide is bundled in this repo)
 
 **Quick Reference:**
 ```
@@ -673,8 +672,8 @@ This workflow is designed for **maximum density without mud**. The key principle
 ---
 
 📄 **Related Documents:**
-- `OZONE-11-MASTER-BUS-GUIDE.md` - Detailed mastering chain
-- `rule-of-30-session-builder.lua` - Automated session creation
+- `signal-chain-presets.lua` - Mastering / mix-bus signal chains
+- `SGM_Professional_Session_Builder.lua` - Automated session creation
 - `phase-alignment-tool.lua` - Guitar alignment automation
 - `scan-real-plugins.lua` - Plugin inventory system
 
