@@ -143,4 +143,22 @@ jobs:
       - name: Build VST3, Standalone, and native tests
         run: cmake --build plugin/build --config Release
       - name: Run native processing tests
-        run: ctest --test-dir plugin/build -C Release --output-on-failure
+        run: |
+          set +e
+          ctest --test-dir plugin/build -C Release --output-on-failure 2>&1 | tee plugin/build/ctest.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "### Native test failure (${{ matrix.os }})"
+              echo '```text'
+              cat plugin/build/Testing/Temporary/LastTest.log 2>/dev/null || cat plugin/build/ctest.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            tail -n 10 plugin/build/ctest.log | while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/}
+              echo "::error::${line}"
+            done
+            exit "$status"
+          fi
