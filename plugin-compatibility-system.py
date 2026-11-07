@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from enum import Enum
 import sqlite3
 from datetime import datetime
-import hashlib
 
 class PluginFormat(Enum):
     VST2 = "VST"
@@ -713,7 +712,7 @@ def main():
     
     if args.command == 'check':
         checker = CompatibilityChecker()
-        report = checker.check_template_compatibility(args.template)
+        checker.check_template_compatibility(args.template)
         
         print(checker.generate_compatibility_report())
         
@@ -742,7 +741,7 @@ def main():
             print(f"\nScan results saved to {args.save}")
     
     elif args.command == 'db':
-        db = PluginDatabase()
+        PluginDatabase()
         
         if args.export:
             # Export database to JSON

@@ -10,43 +10,17 @@ import os
 import unittest
 import tempfile
 import shutil
+import subprocess
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Any
+from unittest.mock import patch
 import numpy as np
+import soundfile as sf
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import test configuration
-from suno_workflow_config_system import (
-    WorkflowConfig,
-    AudioConfig,
-    ModelConfig,
-    EnhancementProfile,
-    TargetFormat,
-    TargetDAW,
-    validate_config,
-    get_config_from_env,
-)
-
 # Configure logging for tests
 logging.basicConfig(level=logging.WARNING)
-
-import sys
-import os
-import unittest
-import tempfile
-import shutil
-import subprocess
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-import numpy as np
-import soundfile as sf
-import logging
-
-# Add current directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Configure logging for tests
 logging.basicConfig(level=logging.WARNING)  # Reduce noise during tests
@@ -456,8 +430,6 @@ class TestSEMASIntegration(unittest.TestCase):
         """Test basic SEMAS functionality"""
         try:
             # Run SEMAS tests
-            import subprocess
-
             result = subprocess.run(
                 ["python", "SEMAS/test_imports.py"],
                 capture_output=True,
@@ -485,7 +457,7 @@ def run_integration_tests():
     # Test module imports
     print("\n1. Testing module imports...")
     try:
-        import suno_workflow_helper
+        __import__("suno_workflow_helper")
         print("   [OK] suno_workflow_helper imported successfully")
     except ImportError as e:
         print(f"   [FAIL] Import error: {e}")

@@ -1,4 +1,7 @@
 -- REAL PLUGIN SCANNER
+-- @description Scans real VST plugin paths and exports the found plugins to JSON
+-- @author Scott Mills
+-- @version 1.0
 -- Scans actual VST paths from user's system
 -- Uses REAL paths: Waves V16, Plugin Alliance, Audified, LANDR, etc.
 -- Version 1.0
@@ -10,27 +13,55 @@ reaper.ShowConsoleMsg("=== SCANNING REAL VST PLUGINS ===\n\n")
 -- USER'S ACTUAL VST PATHS
 -- ===================================
 
-local VST_PATHS = {
+local VST_PATHS = {}
+local os_type = reaper.GetOS()
+
+if os_type == "Win32" or os_type == "Win64" then
+  -- Windows paths
   -- VST2 Paths
-  "C:\\Program Files\\VSTPlugIns",
-  "C:\\Program Files (x86)\\VSTPlugIns",
-  "C:\\Program Files (x86)\\Steinberg\\VSTPlugins",
-  "C:\\Program Files\\Steinberg\\VstPlugins",
-
+  table.insert(VST_PATHS, "C:\\Program Files\\VSTPlugIns")
+  table.insert(VST_PATHS, "C:\\Program Files (x86)\\VSTPlugIns")
+  table.insert(VST_PATHS, "C:\\Program Files (x86)\\Steinberg\\VSTPlugins")
+  table.insert(VST_PATHS, "C:\\Program Files\\Steinberg\\VstPlugins")
   -- VST3 Paths
-  "C:\\Program Files\\Common Files\\VST3",
-
+  table.insert(VST_PATHS, "C:\\Program Files\\Common Files\\VST3")
   -- Specific Plugin Vendors
-  "C:\\Program Files (x86)\\Waves\\Plug-Ins V16",
-  "C:\\Program Files\\LANDR\\Mastering Plugin PRO",
-  "C:\\Program Files\\Plugin Alliance",
-  "C:\\Program Files\\Audified\\GK Amplifikation 3 Pro"
-}
+  table.insert(VST_PATHS, "C:\\Program Files (x86)\\Waves\\Plug-Ins V16")
+  table.insert(VST_PATHS, "C:\\Program Files\\LANDR\\Mastering Plugin PRO")
+  table.insert(VST_PATHS, "C:\\Program Files\\Plugin Alliance")
+  table.insert(VST_PATHS, "C:\\Program Files\\Audified\\GK Amplifikation 3 Pro")
 
--- LOCALAPPDATA only exists on Windows; guard against nil on macOS/Linux
-local localappdata = os.getenv("LOCALAPPDATA")
-if localappdata then
-  table.insert(VST_PATHS, localappdata .. "\\Programs\\Common\\VST3")
+  -- LOCALAPPDATA only exists on Windows; guard against nil
+  local localappdata = os.getenv("LOCALAPPDATA")
+  if localappdata then
+    table.insert(VST_PATHS, localappdata .. "\\Programs\\Common\\VST3")
+  end
+
+elseif os_type == "OSX64" then
+  -- macOS paths
+  local home = os.getenv("HOME") or ""
+  table.insert(VST_PATHS, "/Library/Audio/Plug-Ins/VST")
+  table.insert(VST_PATHS, "/Library/Audio/Plug-Ins/VST3")
+  table.insert(VST_PATHS, "/Library/Audio/Plug-Ins/Components")
+  if home ~= "" then
+    table.insert(VST_PATHS, home .. "/Library/Audio/Plug-Ins/VST")
+    table.insert(VST_PATHS, home .. "/Library/Audio/Plug-Ins/VST3")
+  end
+
+else
+  -- Linux paths
+  local home = os.getenv("HOME") or ""
+  table.insert(VST_PATHS, "/usr/lib/vst")
+  table.insert(VST_PATHS, "/usr/lib/lxvst")
+  table.insert(VST_PATHS, "/usr/lib/vst3")
+  table.insert(VST_PATHS, "/usr/local/lib/vst")
+  table.insert(VST_PATHS, "/usr/local/lib/lxvst")
+  table.insert(VST_PATHS, "/usr/local/lib/vst3")
+  if home ~= "" then
+    table.insert(VST_PATHS, home .. "/.vst")
+    table.insert(VST_PATHS, home .. "/.vst3")
+    table.insert(VST_PATHS, home .. "/.lxvst")
+  end
 end
 
 -- ===================================
@@ -324,6 +355,15 @@ local function main()
   reaper.ShowConsoleMsg("Total VST2: " .. #all_plugins.vst2 .. "\n")
   reaper.ShowConsoleMsg("Total VST3: " .. #all_plugins.vst3 .. "\n")
   reaper.ShowConsoleMsg("Grand Total: " .. all_plugins.total .. "\n\n")
+
+  -- Surface an empty scan in a dialog, not just the console
+  if all_plugins.total == 0 then
+    reaper.ShowMessageBox(
+      "No VST/VST3 plugins were found in any of the " .. #VST_PATHS ..
+      " scanned paths.\n\nCheck that your plugin paths are correct for your OS, " ..
+      "or that REAPER's own plugin scan has found them.",
+      "Plugin Scan — Nothing Found", 0)
+  end
 
   -- Find key plugins for Rule of 30
   local key_plugins = findKeyPlugins(all_plugins)

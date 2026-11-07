@@ -1,4 +1,7 @@
 -- SCRIPT VALIDATOR
+-- @description Syntax-checks all bundled scripts before running them
+-- @author Scott Mills
+-- @version 1.0
 -- Tests ALL Rule of 30 scripts for syntax errors BEFORE user runs them
 -- Version 1.0
 

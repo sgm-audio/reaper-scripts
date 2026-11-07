@@ -1,4 +1,7 @@
 -- REAPER AI Control Hub - Plugin Interface Coordinator
+-- @description Plugin discovery, routing templates, and external AI tool launches
+-- @author Scott Mills
+-- @version 1.0
 -- Acts as bridge between REAPER and external AI processing plugins
 
 function msg(m)
@@ -257,12 +260,29 @@ function ExternalToolLauncher:new()
 end
 
 function ExternalToolLauncher:_get_tool_paths()
-    return {
-        "C:\\Program Files\\AudioMovers\\OmniBridge",
-        "C:\\Program Files\\Common Files\\VST3\\AI",
-        "C:\\Program Files\\ReWire",
-        reaper.GetResourcePath() .. "\\UserPlugins\\AI"
-    }
+    local paths = {}
+    local os_type = reaper.GetOS()
+    if os_type == "Win32" or os_type == "Win64" then
+        table.insert(paths, "C:\\Program Files\\AudioMovers\\OmniBridge")
+        table.insert(paths, "C:\\Program Files\\Common Files\\VST3\\AI")
+        table.insert(paths, "C:\\Program Files\\ReWire")
+    elseif os_type == "OSX64" then
+        local home = os.getenv("HOME") or ""
+        table.insert(paths, "/Applications/AudioMovers/OmniBridge.app")
+        if home ~= "" then
+            table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST3/AI")
+        end
+    else
+        -- Linux
+        local home = os.getenv("HOME") or ""
+        if home ~= "" then
+            table.insert(paths, home .. "/.vst3/AI")
+            table.insert(paths, home .. "/.local/share/AudioMovers/OmniBridge")
+        end
+    end
+    -- REAPER resource path works on every OS (forward slashes are portable)
+    table.insert(paths, reaper.GetResourcePath() .. "/UserPlugins/AI")
+    return paths
 end
 
 function ExternalToolLauncher:launch_external_processing(track_indices, tool_type)

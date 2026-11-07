@@ -1,4 +1,7 @@
 -- List All Available Reaper Plugins
+-- @description Lists installed VST/VST3/JSFX plugins and exports plugin_inventory.json
+-- @author Scott Mills
+-- @version 1.0
 -- Scans and exports all VST, VST3, JS, and AU plugins available in Reaper
 -- Version 1.0
 

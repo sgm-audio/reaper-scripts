@@ -1,4 +1,7 @@
 -- REAPER Advanced Signal Chain Library v3.0
+-- @description Signal-chain preset data for mixing/mastering chains
+-- @author Scott Mills
+-- @version 3.0
 -- Professional Audio Engineering Presets
 -- Developed by Scott Mills Audio Systems
 

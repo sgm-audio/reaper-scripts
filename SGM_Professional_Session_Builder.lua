@@ -1,4 +1,7 @@
 -- SGM Studio Professional Session Builder v2.0
+-- @description Builds a full session template (tracks, buses, routing) from analysis
+-- @author Scott Mills
+-- @version 2.0
 -- Comprehensive DAW analyzer + automatic session creation with highest-value plugins
 -- Fully functional version - no placeholders, complete session building
 
@@ -268,15 +271,34 @@ function ProfessionalPluginDB:getPluginScanPaths()
         table.insert(paths, reaper.GetResourcePath() .. "\\UserPlugins")
         
     elseif os_type == "OSX64" then
-        -- macOS plugin paths
+        -- macOS plugin paths (~ is not expanded by file_exists, use HOME)
+        local home = os.getenv("HOME") or ""
         table.insert(paths, "/Library/Audio/Plug-Ins/VST3")
         table.insert(paths, "/Library/Audio/Plug-Ins/VST")
-        table.insert(paths, "~/Library/Audio/Plug-Ins/VST3")
-        table.insert(paths, "~/Library/Audio/Plug-Ins/VST")
+        table.insert(paths, "/Library/Audio/Plug-Ins/Components")
+        if home ~= "" then
+            table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST3")
+            table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST")
+        end
         table.insert(paths, reaper.GetResourcePath() .. "/Effects")
-        
+
+    else
+        -- Linux plugin paths
+        local home = os.getenv("HOME") or ""
+        table.insert(paths, "/usr/lib/vst")
+        table.insert(paths, "/usr/lib/lxvst")
+        table.insert(paths, "/usr/local/lib/vst")
+        table.insert(paths, "/usr/local/lib/lxvst")
+        table.insert(paths, "/usr/lib/vst3")
+        table.insert(paths, "/usr/local/lib/vst3")
+        if home ~= "" then
+            table.insert(paths, home .. "/.vst")
+            table.insert(paths, home .. "/.vst3")
+            table.insert(paths, home .. "/.lxvst")
+        end
+        table.insert(paths, reaper.GetResourcePath() .. "/Effects")
     end
-    
+
     return paths
 end
 
