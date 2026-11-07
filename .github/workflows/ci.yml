@@ -119,7 +119,26 @@ jobs:
             libxrandr-dev libxcursor-dev libfreetype6-dev \
             libfontconfig1-dev libgl1-mesa-dev
       - name: Configure pinned JUCE project
-        run: cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+        run: |
+          mkdir -p plugin/build
+          set +e
+          cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee plugin/build/configure.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "### CMake configure failed (${{ matrix.os }})"
+              echo '```text'
+              tail -n 80 plugin/build/configure.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            tail -n 50 plugin/build/configure.log | while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/}
+              echo "::error::${line}"
+            done
+            exit "$status"
+          fi
       - name: Build VST3, Standalone, and native tests
         run: cmake --build plugin/build --config Release
       - name: Run native processing tests
