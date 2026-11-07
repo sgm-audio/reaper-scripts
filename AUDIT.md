@@ -62,13 +62,16 @@ and Lua 5.4 (via the Lua 5.4 runtime):
 | `tests/lua_regression.lua` | 72/72 checks pass |
 | Setuptools wheel and bundled-module/entry-point content | Pass |
 | Installer → installed blueprint → generated JUCE project | 8/8 files byte-identical |
+| JUCE VST3, Standalone, and native tests on Linux/Windows/macOS | Pass in [CI run 42343310696](https://github.com/sgm-audio/reaper-scripts/actions/runs/42343310696) |
 
 The separator, batch processor, and SEMAS modules are now bundled. Their
 lightweight behavior is tested without Demucs/Torch; the Demucs CLI boundary is
 simulated explicitly and no heavy model execution is claimed. Local native
 configuration stops at missing `pkg-config`/JUCE platform headers because the
-sandbox cannot reach Debian repositories. The native build is therefore covered
-by the Linux/Windows/macOS CI job, not represented as a local build pass.
+sandbox cannot reach Debian repositories, so no local binary is claimed. The
+pinned JUCE VST3, Standalone, and native tests subsequently passed in CI on all
+three desktop platforms; the initial CI runs also caught and fixed missing C
+language enablement and normalized-float unity-gain noise on GCC/Clang.
 
 ## Path and generated-file audit
 
@@ -109,10 +112,11 @@ following therefore remain **manual integration checks**, not claimed passes:
    real model on representative audio, and evaluate output quality/performance.
    Exercise unsupported SEMAS enhancement/mastering requests only with a real
    external processor. Neither is proven by lightweight fixtures.
-7. **Plugin host validation:** After a native CI build, scan the VST3 in REAPER,
-   verify automation/state recall and mono/stereo processing, and run the
-   Standalone editor on each target OS. Source/native tests do not prove host
-   compatibility or AI inference, which is not implemented.
+7. **Plugin host validation:** Using a local build of the CI-verified sources,
+   scan the VST3 in REAPER, verify automation/state recall and mono/stereo
+   processing, and run the Standalone editor on each target OS. Source/native
+   tests do not prove interactive host compatibility or AI inference, which is
+   not implemented.
 
 Intentional limitations are also documented for users: preset Lua files are data,
 not chain loaders; the AI hub does not render/launch automatically; the builder

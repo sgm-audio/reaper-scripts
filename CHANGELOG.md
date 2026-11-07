@@ -34,6 +34,10 @@ All notable changes to this repository. Format follows Keep a Changelog.
 - All 17 former optional-integration skips are eliminated. The comprehensive
   suite now requires exactly 23 passes and fails on any skip; the extensionless
   audio fixture and direct SEMAS test import path were corrected.
+- Native JUCE builds enable the SDK's C sources on Linux/macOS and normalize
+  sub-step floating-point noise around 0 dB, preserving strict double-precision
+  unity behavior across GCC, Clang, and MSVC. CI configure/test failures retain
+  actionable diagnostics.
 - Suno workflow failures now produce nonzero CLI exits instead of “Success!”;
   `--no-auto-import` is meaningful, configuration is preserved, media items and
   durations are generated, original codecs keep their extension, output roots
