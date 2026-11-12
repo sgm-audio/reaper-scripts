@@ -554,7 +554,7 @@ end
 -- ===================================
 
 function showMenu()
-  local menu = "Plugin Manager|"
+  local menu = ""
   menu = menu .. "Scan All Plugins|"
   menu = menu .. "List Plugins on Selected Track|"
   menu = menu .. "Automate Last Touched Parameter|"

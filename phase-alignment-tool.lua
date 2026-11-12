@@ -47,6 +47,7 @@ local function findFirstTransient(item)
   if not take then return nil end
 
   local source = reaper.GetMediaItemTake_Source(take)
+  if not source then return nil end
   local sample_rate = reaper.GetMediaSourceSampleRate(source)
   local num_channels = reaper.GetMediaSourceNumChannels(source)
 
@@ -54,27 +55,40 @@ local function findFirstTransient(item)
 
   -- Get audio accessor
   local accessor = reaper.CreateTakeAudioAccessor(take)
+  if not accessor then return nil end
   local start_time = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local accessor_start = reaper.GetAudioAccessorStartTime(accessor)
+  local accessor_end = reaper.GetAudioAccessorEndTime(accessor)
 
   -- Analyze first 100ms for transient
-  local samples_to_analyze = math.floor(CONFIG.analysis_window * sample_rate)
+  local samples_to_analyze = math.floor(math.min(CONFIG.analysis_window, accessor_end - accessor_start) * sample_rate)
+  if samples_to_analyze <= 0 then
+    reaper.DestroyAudioAccessor(accessor)
+    return nil
+  end
   local audio_buffer = reaper.new_array(samples_to_analyze * num_channels)
 
   -- Read audio data
-  local samples_read = reaper.GetAudioAccessorSamples(
+  local status = reaper.GetAudioAccessorSamples(
     accessor,
     sample_rate,
     num_channels,
-    0,  -- Start offset
+    accessor_start,  -- Take accessor time, not project position
     samples_to_analyze,
     audio_buffer
   )
 
-  -- GetAudioAccessorSamples returns frames, while the buffer is interleaved.
+  -- GetAudioAccessorSamples returns a status, NOT a frame count.
+  if status ~= 1 then
+    reaper.DestroyAudioAccessor(accessor)
+    return nil
+  end
+
+  -- The requested frames are interleaved across channels.
   -- Check every channel and convert the frame index (not scalar index) to time.
   local transient_frame = nil
   local peak_value = 0
-  for frame = 0, samples_read - 1 do
+  for frame = 0, samples_to_analyze - 1 do
     for channel = 0, num_channels - 1 do
       local buffer_index = frame * num_channels + channel + 1
       local sample_value = math.abs(audio_buffer[buffer_index])
@@ -240,8 +254,8 @@ local function analyzePhaseCorrelation()
     time_diff, time_diff * 48000))
 
   if time_diff < 0.0002 then  -- Less than 0.2ms
-    reaper.ShowConsoleMsg("\n✅ EXCELLENT: Tracks are sample-accurate aligned\n")
-    reaper.ShowConsoleMsg("   Mono compatibility: Should be very good\n")
+    reaper.ShowConsoleMsg("\n✅ EXCELLENT: Item positions are within 0.2ms\n")
+    reaper.ShowConsoleMsg("   Item positions alone do not establish phase or mono compatibility.\n")
   elseif time_diff < 0.001 then  -- Less than 1ms
     reaper.ShowConsoleMsg("\n✓ GOOD: Tracks are well aligned\n")
     reaper.ShowConsoleMsg("   Minor timing differences add natural width\n")
@@ -286,7 +300,7 @@ end
 -- ===================================
 
 local function showMenu()
-  local menu = "Phase Alignment Tool|"
+  local menu = ""
   menu = menu .. "1. Auto-Align Selected Tracks (Quad-Track Guitar)|"
   menu = menu .. "2. Analyze Item Timing Difference (2 tracks)|"
   menu = menu .. "Nudge Left 1ms|"
@@ -317,6 +331,8 @@ local function showMenu()
     reaper.ShowConsoleMsg("\nEdit these values at the top of the script\n")
   end
 end
+
+_G.SGMPhaseAlignment = {findFirstTransient = findFirstTransient}
 
 -- Run menu
 showMenu()

@@ -28,15 +28,17 @@ jobs:
   lua-smoke:
     # Runs each script with a stubbed REAPER environment to catch
     # load-time crashes (undefined globals, nil arithmetic) that
-    # a syntax check cannot find. Timeout = script waits on real
-    # REAPER input under stubs -> SKIP, not a failure.
+    # a syntax check cannot find. A timeout is a failure: a hung script
+    # must not silently turn into a passing QA run.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Lua 5.4
         run: sudo apt-get update && sudo apt-get install -y lua5.4
       - name: Lua regression tests
-        run: lua5.4 tests/lua_regression.lua
+        run: |
+          lua5.4 tests/lua_regression.lua
+          lua5.4 tests/lua_api_contracts.lua
       - name: Smoke-run Lua scripts
         run: |
           fail=0
@@ -44,8 +46,6 @@ jobs:
             out=$(timeout 10 lua5.4 tests/lua_smoke.lua "$f" 2>&1); rc=$?
             if [ $rc -eq 0 ]; then
               echo "OK: $f: $out"
-            elif [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
-              echo "SKIP (waits on REAPER input under stubs): $f"
             else
               echo "RUNTIME ERROR ($rc): $f: $out"; fail=1
             fi

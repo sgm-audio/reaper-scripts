@@ -385,7 +385,7 @@ function AIHubController:new()
 end 
 
 function AIHubController:show_interface()
-    local menu = "REAPER AI Control Hub|" ..
+    local menu = "" ..
         "Inspect Master FX / Export Routing Notes|" ..
         "ReWire Setup Notes|" ..
         "OmniBridge Setup Notes|" ..

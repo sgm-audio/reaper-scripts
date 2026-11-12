@@ -257,7 +257,7 @@ function buildProfessionalSession(project_type, complexity)
 end
 
 local function showProfessionalBuilderMenu()
-  local menu = "SGM Session Builder (adds to current project)|" ..
+  local menu = "" ..
     "Full Production (25 tracks)|" ..
     "Mixing (7 tracks)|" ..
     "Mastering (2 tracks)|" ..
