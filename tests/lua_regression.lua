@@ -84,7 +84,18 @@ function reaper.SetMediaTrackInfo_Value(track, key, value)
 end
 function reaper.SetTrackColor(_, _) end
 function reaper.ColorToNative(r, g, b) return r * 65536 + g * 256 + b end
-function reaper.TrackFX_AddByName(_, _, _) return 0 end
+-- TrackFX_AddByName(track, fxname, recFX, instantiate): recFX is the boolean
+-- record-input-FX flag (not an install flag); instantiate: negative=always add,
+-- 0=query only, positive=add if missing. Returns -1 on failure.
+-- The previous stub returned 0 unconditionally, masking the bug where
+-- recFX=true with instantiate omitted queries the record-FX chain and never
+-- installs stock FX. recFX is tested for truthiness so the buggy call
+-- TrackFX_AddByName(track, name, 1) (recFX=1 number) is also rejected.
+function reaper.TrackFX_AddByName(_track, _fxname, recFX, instantiate)
+  if instantiate == nil then instantiate = 0 end
+  if recFX and instantiate == 0 then return -1 end
+  return 0
+end
 function reaper.CreateTrackSend(_, destination)
   sends_created = sends_created + 1
   parallel_send_pending = destination.name:find("Parallel", 1, true) ~= nil
@@ -160,6 +171,7 @@ local engine = _G.SGMSessionBuilder.SessionImplementationEngine:new()
 local implemented, implementation_error = engine:implementSession(full)
 check(implemented, "session implementation failed: " .. tostring(implementation_error))
 check(#tracks == 25, "session implementation created wrong track count")
+check(#engine.fx_warnings == 0, "stock FX additions produced warnings: " .. table.concat(engine.fx_warnings, ", "))
 check(sends_created == 31, "session implementation created wrong send count")
 check(last_parallel_volume and math.abs(last_parallel_volume - (10 ^ (-6 / 20))) < 0.000001, "parallel dB was not converted to linear gain")
 check(tracks[1].values.B_MAINSEND == 0, "routed input still sends directly to master")
