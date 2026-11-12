@@ -531,7 +531,7 @@ end
 
 function automateSelectedPlugin()
   local touched, track_number, fx_index, param_index = reaper.GetLastTouchedFX()
-  if not touched or not fx_index or fx_index < 0 or not param_index then
+  if not touched or fx_index < 0 or param_index < 0 then
     reaper.ShowMessageBox("No plugin parameter touched", "Error", 0)
     return false
   end
