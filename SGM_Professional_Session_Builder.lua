@@ -164,7 +164,12 @@ function SessionImplementationEngine:addPlugins(track_templates, complexity)
   if complexity == "no_fx" then return end
   for _, template in ipairs(track_templates) do
     for _, fx_name in ipairs(STOCK_FX[template.type] or {}) do
-      local fx_index = reaper.TrackFX_AddByName(template._track, fx_name, 1)
+      -- TrackFX_AddByName(track, fxname, recFX, instantiate): 3rd arg is the
+      -- record-input-FX flag (boolean), not an install flag; the 4th arg
+      -- controls instantiation (negative = always add, 0 = query only,
+      -- positive = add if missing). Passing recFX=true with instantiate
+      -- omitted queries the record-FX chain and never installs stock FX.
+      local fx_index = reaper.TrackFX_AddByName(template._track, fx_name, false, 1)
       if fx_index < 0 then
         table.insert(self.fx_warnings, template.name .. ": " .. fx_name)
       end
