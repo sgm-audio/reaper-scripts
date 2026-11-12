@@ -16,6 +16,9 @@ for f in *.lua; do timeout 10 lua5.4 tests/lua_smoke.lua "$f" || exit 1; done
 # Behavioral Lua regressions (cache parsing, JSON, paths, routing, manifests)
 lua5.4 tests/lua_regression.lua
 
+# Official API semantics and real menu-action contracts
+lua5.4 tests/lua_api_contracts.lua
+
 # Python syntax and lint (RPR_* names are injected by REAPER)
 python3 -m compileall -q .
 python3 -m pyflakes *.py tests/*.py SEMAS/*.py SEMAS/core/*.py | grep -v "undefined name 'RPR_"
