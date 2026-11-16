@@ -15,7 +15,7 @@ class SEMASAPI:
             input_file=str(input_file),
             operations=list(operations or ["analyze"]),
         )
-        self.orchestrator.submit_job(job)
+        self.orchestrator.submit_job(job, auto_process=not process)
         if process:
             self.orchestrator.process_job(job.id)
         return job.to_dict()

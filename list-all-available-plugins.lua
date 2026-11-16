@@ -131,10 +131,14 @@ function PluginScanner:scanFXBrowser()
 
   local caches = {
     {"reaper-vstplugins64.ini", "vst"},
+    {"reaper-vstplugins-arm64.ini", "vst"},
     {"reaper-vstplugins.ini", "vst"},
     {"reaper-clap-plugins64.ini", "clap"},
+    {"reaper-clap-plugins-arm64.ini", "clap"},
     {"reaper-au-plugins64.ini", "au"},
+    {"reaper-au-plugins.ini", "au"},
     {"reaper-lv2-plugins64.ini", "lv2"},
+    {"reaper-lv2-plugins.ini", "lv2"},
   }
   local seen = {}
   for _, cache in ipairs(caches) do

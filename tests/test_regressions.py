@@ -123,6 +123,14 @@ class SunoWorkflowRegressions(unittest.TestCase):
         finally:
             os.chdir(old_cwd)
 
+    def test_suno_rpp_uses_valid_mutesolo_syntax(self):
+        with patch("suno_workflow_helper.YourMT3StemSeparator", FakeSeparator):
+            result = self.workflow.process_suno_track(str(self.input), "MuteCheck")
+        self.assertTrue(result.success, result.error_message)
+        project = Path(result.project_file).read_text(encoding="utf-8")
+        self.assertIn("MUTESOLO 1 0 0", project)
+        self.assertNotIn("B_MUTE", project)
+
 
 class PerformanceRegressions(unittest.TestCase):
     def test_executor_keyword_arguments(self):
@@ -227,6 +235,101 @@ class PluginAndCacheRegressions(unittest.TestCase):
             parsed = parse_reaper_ini(str(cache))
             self.assertIn("Delay, Wide (Vendor)", parsed)
             self.assertEqual(parsed["Delay, Wide (Vendor)"]["type"], "VST3")
+
+    def test_reaper_interface_build_project_balances_undo_and_cleans_up(self):
+        import reaper_ai_integration as rai
+
+        calls = []
+        tracks = []
+
+        def rpr_get_cursor():
+            return 4.5
+
+        def rpr_set_cursor(pos, _moveview, _seek):
+            calls.append(("cursor", pos))
+
+        def rpr_undo_begin():
+            calls.append("undo_begin")
+
+        def rpr_undo_end(desc, _flags):
+            calls.append(("undo_end", desc))
+
+        def rpr_prevent(delta):
+            calls.append(("refresh", delta))
+
+        def rpr_update():
+            calls.append("update")
+
+        def rpr_num_tracks():
+            return len(tracks)
+
+        def rpr_insert_track(idx, _defaults):
+            tracks.insert(idx, {"idx": idx})
+
+        def rpr_get_track(_proj, idx):
+            return tracks[idx]
+
+        def rpr_getset_track_str(tr, _key, val, set_val):
+            if set_val:
+                tr["name"] = val
+            return (True, tr.get("name", ""))
+
+        def rpr_delete_track(tr):
+            tracks.remove(tr)
+            calls.append(("deleted", tr.get("name")))
+
+        def rpr_get_env_by_name(_tr, _name):
+            return {"env": True}
+
+        def rpr_get_env_scaling(_env):
+            return 0
+
+        def rpr_scale_to_env(mode, val):
+            calls.append(("scale_mode", mode))
+            return val
+
+        def rpr_insert_env_pt(*_args):
+            pass
+
+        def rpr_sort_pts(_env):
+            pass
+
+        mocks = {
+            "RPR_GetCursorPosition": rpr_get_cursor,
+            "RPR_SetEditCurPos": rpr_set_cursor,
+            "RPR_Undo_BeginBlock": rpr_undo_begin,
+            "RPR_Undo_EndBlock": rpr_undo_end,
+            "RPR_PreventUIRefresh": rpr_prevent,
+            "RPR_UpdateArrange": rpr_update,
+            "RPR_GetNumTracks": rpr_num_tracks,
+            "RPR_InsertTrackAtIndex": rpr_insert_track,
+            "RPR_GetTrack": rpr_get_track,
+            "RPR_GetSetMediaTrackInfo_String": rpr_getset_track_str,
+            "RPR_DeleteTrack": rpr_delete_track,
+            "RPR_GetTrackEnvelopeByName": rpr_get_env_by_name,
+            "RPR_GetEnvelopeScalingMode": rpr_get_env_scaling,
+            "RPR_ScaleToEnvelopeMode": rpr_scale_to_env,
+            "RPR_InsertEnvelopePoint": rpr_insert_env_pt,
+            "RPR_Envelope_SortPoints": rpr_sort_pts,
+        }
+        with patch.dict(rai.__dict__, mocks):
+            iface = rai.ReaperInterface()
+            iface.build_project({
+                "tracks": [{
+                    "name": "Track 1",
+                    "volume_envelope": [{"time": 0.0, "value": 1.0}],
+                    "items": [{"source": "", "offset": 0.0, "position": 0.0, "duration": 1.0}],
+                }],
+                "markers": [],
+            })
+        self.assertEqual(len(tracks), 1)
+        self.assertIn("undo_begin", calls)
+        self.assertIn(("undo_end", "Import AAF"), calls)
+        self.assertIn(("refresh", 1), calls)
+        self.assertIn(("refresh", -1), calls)
+        self.assertIn(("deleted", "Insertion"), calls)
+        self.assertIn(("cursor", 4.5), calls)
+        self.assertIn(("scale_mode", 0), calls)
 
 
 if __name__ == "__main__":

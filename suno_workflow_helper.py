@@ -321,10 +321,13 @@ class SunoReaperWorkflow:
                 project.write(f"  <TRACK {{{uuid.uuid4()}}}\n")
                 project.write(f'    NAME "{self._rpp_string(track_name)}"\n')
                 if key == "original":
-                    project.write("    B_MUTE 1\n")
+                    project.write("    MUTESOLO 1 0 0\n")
                 path = media.get(key)
                 if auto_import and path:
-                    relative = os.path.relpath(path, os.path.dirname(project_file))
+                    try:
+                        relative = os.path.relpath(path, os.path.dirname(project_file))
+                    except ValueError:
+                        relative = path
                     source_type = media_source_types[key]
                     # All stems and the original represent the same song, so a
                     # known sibling duration is a safe fallback for codecs that

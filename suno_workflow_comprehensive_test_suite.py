@@ -96,7 +96,7 @@ class TestSunoWorkflowHelper(unittest.TestCase):
             content = project.read()
         self.assertIn('<SOURCE WAVE', content)
         self.assertIn('FILE "stems/vocals.wav"', content)
-        self.assertIn('B_MUTE 1', content)
+        self.assertIn('MUTESOLO 1 0 0', content)
 
     def test_process_nonexistent_file(self):
         """Test handling of nonexistent file"""

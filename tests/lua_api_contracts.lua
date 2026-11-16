@@ -79,15 +79,78 @@ for path, first in pairs({
   end
   load_script(path, menu_env)
 end
-local position, undo = 2, 0
+local position, undo, refresh = 2, 0, 0
 api.CountSelectedMediaItems = function() return 1 end
 api.GetSelectedMediaItem = function() return {} end
 api.GetMediaItemInfo_Value = function() return position end
 api.SetMediaItemInfo_Value = function(_, key, value) position = value end
 api.Undo_BeginBlock = function() undo = undo + 1 end
 api.Undo_EndBlock = function() undo = undo - 1 end
+api.PreventUIRefresh = function(d) refresh = refresh + d end
 api.UpdateArrange = function() end
 env.gfx.showmenu = function() return 6 end
 load_script("phase-alignment-tool.lua", env)
-check(math.abs(position - 2.0001) < 1e-9 and undo == 0, "row 6 must nudge right 0.1ms with balanced undo")
+check(math.abs(position - 2.0001) < 1e-9 and undo == 0 and refresh == 0,
+  "row 6 must nudge right 0.1ms with balanced undo and PreventUIRefresh")
+
+-- plugin-wrapper.lua: automateSelectedPlugin bitmask guard, confirmation, undo, and PreventUIRefresh
+local pw_env = environment()
+pw_env.reaper.GetResourcePath = function() return "/unused-contract-fixture" end
+pw_env.reaper.GetOS = function() return "Linux" end
+pw_env.reaper.ShowMessageBox = function() return 0 end
+load_script("plugin-wrapper.lua", pw_env)
+local pw_undo, pw_refresh, pw_points = 0, 0, 0
+pw_env.reaper.Undo_BeginBlock = function() pw_undo = pw_undo + 1 end
+pw_env.reaper.Undo_EndBlock = function() pw_undo = pw_undo - 1 end
+pw_env.reaper.PreventUIRefresh = function(d) pw_refresh = pw_refresh + d end
+pw_env.reaper.UpdateArrange = function() end
+pw_env.reaper.GetTrack = function() return {} end
+pw_env.reaper.TrackFX_GetFXName = function() return true, "ReaEQ" end
+pw_env.reaper.TrackFX_GetParamName = function() return true, "Gain" end
+pw_env.reaper.GetFXEnvelope = function() return {} end
+pw_env.reaper.GetCursorPosition = function() return 0 end
+pw_env.reaper.InsertEnvelopePoint = function() pw_points = pw_points + 1 end
+pw_env.reaper.Envelope_SortPoints = function() end
+pw_env.reaper.GetLastTouchedFX = function() return true, 1, 0x1000000, 0 end
+check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == false and pw_points == 0,
+  "record-input FX bitmask must be rejected")
+pw_env.reaper.GetLastTouchedFX = function() return true, 1, 0, 0 end
+pw_env.reaper.ShowMessageBox = function() return 0 end
+check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == false and pw_undo == 0 and pw_points == 0,
+  "declined automation must not mutate envelopes")
+pw_env.reaper.ShowMessageBox = function() return 1 end
+check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == true and pw_undo == 0 and pw_refresh == 0 and pw_points == 21,
+  "confirmed automation must insert 21 points with balanced undo and PreventUIRefresh")
+
+-- SGM_Professional_Session_Builder.lua: rollback partially created tracks on error
+local sb_env = environment()
+load_script("SGM_Professional_Session_Builder.lua", sb_env)
+local sb_tracks, sb_undo, sb_refresh = {}, 0, 0
+sb_env.reaper.CountTracks = function() return #sb_tracks end
+sb_env.reaper.InsertTrackAtIndex = function(idx)
+  if #sb_tracks >= 2 then return end
+  table.insert(sb_tracks, idx + 1, {id = idx + 1})
+end
+sb_env.reaper.GetTrack = function(_, idx) return sb_tracks[idx + 1] end
+sb_env.reaper.DeleteTrack = function(tr)
+  for i = #sb_tracks, 1, -1 do
+    if sb_tracks[i] == tr then table.remove(sb_tracks, i) end
+  end
+end
+sb_env.reaper.GetSetMediaTrackInfo_String = function() return true, "" end
+sb_env.reaper.ColorToNative = function() return 0 end
+sb_env.reaper.SetTrackColor = function() end
+sb_env.reaper.SetMediaTrackInfo_Value = function() end
+sb_env.reaper.Undo_BeginBlock = function() sb_undo = sb_undo + 1 end
+sb_env.reaper.Undo_EndBlock = function() sb_undo = sb_undo - 1 end
+sb_env.reaper.PreventUIRefresh = function(d) sb_refresh = sb_refresh + d end
+sb_env.reaper.TrackList_AdjustWindows = function() end
+sb_env.reaper.UpdateArrange = function() end
+local sb_builder = sb_env.SGMSessionBuilder.AdvancedSessionBuilder:new()
+local sb_engine = sb_env.SGMSessionBuilder.SessionImplementationEngine:new()
+local sb_full = sb_builder:buildSessionFromAnalysis("full_production", "no_fx")
+local sb_ok = sb_engine:implementSession(sb_full)
+check(sb_ok == false and #sb_tracks == 0 and sb_undo == 0 and sb_refresh == 0,
+  "failed session build must roll back partial tracks and balance undo/refresh")
+
 print(string.format("All %d API contract checks passed", checks))

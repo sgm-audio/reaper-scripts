@@ -53,11 +53,30 @@ class SEMASOrchestrator:
                     "duration_seconds": frames / sample_rate if sample_rate else 0.0,
                 }
         except (wave.Error, EOFError) as exc:
+            try:
+                import soundfile as sf
+            except ImportError:
+                sf = None
+            if sf is not None:
+                try:
+                    info = sf.info(str(source))
+                    if info.samplerate > 0:
+                        return {
+                            "input_file": str(source),
+                            "operations": list(job.operations),
+                            "sample_rate": info.samplerate,
+                            "channels": info.channels,
+                            "sample_width_bytes": 4 if "FLOAT" in (info.subtype or "") or "32" in (info.subtype or "") else 2,
+                            "frames": info.frames,
+                            "duration_seconds": info.frames / info.samplerate,
+                        }
+                except (RuntimeError, OSError):
+                    pass
             raise ValueError(
                 f"Local SEMAS analysis requires an uncompressed PCM WAV file: {source}"
             ) from exc
 
-    def submit_job(self, job: SEMASJob) -> str:
+    def submit_job(self, job: SEMASJob, auto_process: bool = True) -> str:
         if not isinstance(job, SEMASJob):
             raise TypeError("job must be a SEMASJob")
         with self._lock:
@@ -65,7 +84,7 @@ class SEMASOrchestrator:
                 raise ValueError(f"Duplicate job id: {job.id}")
             job.status = JobStatus.PENDING
             self.jobs[job.id] = job
-            executor = self._executor
+            executor = self._executor if auto_process else None
         if executor is not None:
             executor.submit(self.process_job, job.id)
         return job.id
@@ -81,16 +100,19 @@ class SEMASOrchestrator:
     def process_job(self, job_id: str) -> SEMASJob:
         with self._lock:
             job = self.jobs.get(job_id)
-        if job is None:
-            raise KeyError(f"Unknown SEMAS job: {job_id}")
-        job.status = JobStatus.RUNNING
+            if job is None:
+                raise KeyError(f"Unknown SEMAS job: {job_id}")
+            job.status = JobStatus.RUNNING
         try:
-            job.results = dict(self.processor(job) or {})
-            job.status = JobStatus.COMPLETED
-            job.error = ""
+            results = dict(self.processor(job) or {})
+            with self._lock:
+                job.results = results
+                job.status = JobStatus.COMPLETED
+                job.error = ""
         except Exception as exc:
-            job.status = JobStatus.FAILED
-            job.error = str(exc)
+            with self._lock:
+                job.status = JobStatus.FAILED
+                job.error = str(exc)
         return job
 
     def start_worker(self):
