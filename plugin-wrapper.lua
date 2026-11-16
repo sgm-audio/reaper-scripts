@@ -390,8 +390,8 @@ function PluginInstance:loadPreset(preset_index)
   reaper.TrackFX_SetPresetByIndex(self.track, self.fx_index, preset_index)
 end
 
-function PluginInstance:savePreset(preset_name)
-  reaper.TrackFX_SetPreset(self.track, self.fx_index, preset_name)
+function PluginInstance:loadPresetByName(preset_name)
+  return reaper.TrackFX_SetPreset(self.track, self.fx_index, preset_name)
 end
 
 function PluginInstance:enable()
@@ -460,6 +460,9 @@ function PluginAutomation:automateParameter(param_index, start_value, end_value,
 
   local current_time = reaper.GetCursorPosition()
   local tempo = reaper.Master_GetTempo()
+  if not tempo or tempo <= 0 then
+    return false
+  end
   local duration_seconds = (duration_beats * 60) / tempo
 
   -- Add automation points
@@ -535,6 +538,12 @@ function automateSelectedPlugin()
     reaper.ShowMessageBox("No plugin parameter touched", "Error", 0)
     return false
   end
+  if (fx_index & 0x1000000) ~= 0 or (fx_index & 0x2000000) ~= 0 then
+    reaper.ShowMessageBox(
+      "Record-input FX and take FX are not supported for track FX envelope automation.",
+      "Unsupported FX Type", 0)
+    return false
+  end
   local track = track_number == 0 and reaper.GetMasterTrack(0) or reaper.GetTrack(0, track_number - 1)
   if not track then
     reaper.ShowMessageBox("The last touched track no longer exists", "Error", 0)
@@ -542,11 +551,35 @@ function automateSelectedPlugin()
   end
 
   local plugin = PluginInstance:new(track, fx_index)
+  local fx_name = plugin:getName()
+  local param_name = plugin:getParamName(param_index)
+  local answer = reaper.ShowMessageBox(
+    string.format("Create a 4-second exponential automation sweep on:\n%s — %s?",
+      tostring(fx_name ~= "" and fx_name or ("FX #" .. fx_index)),
+      tostring(param_name ~= "" and param_name or ("Param #" .. param_index))),
+    "Automate Parameter", 1)
+  if answer ~= 1 then
+    return false
+  end
+
   local automation = PluginAutomation:new(plugin)
-  local ok = automation:createSweep(param_index, 0.0, 1.0, 4.0, "exponential")
-  reaper.ShowMessageBox(ok and "Automation created!" or "Could not create the parameter envelope",
-    ok and "Success" or "Error", 0)
-  return ok
+  reaper.Undo_BeginBlock()
+  reaper.PreventUIRefresh(1)
+  local call_ok, sweep_ok = pcall(function()
+    return automation:createSweep(param_index, 0.0, 1.0, 4.0, "exponential")
+  end)
+  reaper.PreventUIRefresh(-1)
+  reaper.Undo_EndBlock("SGM: Automate FX Parameter", -1)
+  reaper.UpdateArrange()
+
+  if not call_ok then
+    reaper.ShowMessageBox("Automation failed:\n" .. tostring(sweep_ok), "Error", 0)
+    return false
+  end
+  reaper.ShowMessageBox(
+    sweep_ok and "Automation created!" or "Could not create the parameter envelope",
+    sweep_ok and "Success" or "Error", 0)
+  return sweep_ok
 end
 
 -- ===================================
@@ -560,8 +593,10 @@ function showMenu()
   menu = menu .. "Automate Last Touched Parameter|"
   menu = menu .. "Export Plugin Database"
 
+  if gfx.init then gfx.init("", 0, 0, 0, 0, 0) end
   gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
   local result = gfx.showmenu(menu)
+  if gfx.quit then gfx.quit() end
 
   if result == 1 then
     scanAllPlugins()
@@ -571,8 +606,12 @@ function showMenu()
     automateSelectedPlugin()
   elseif result == 4 then
     local scanner = PluginScanner:new()
-    scanner.db:save()
-    reaper.ShowMessageBox("Database saved to:\n" .. PLUGIN_DB_FILE, "Success", 0)
+    local saved = scanner.db:save()
+    if saved then
+      reaper.ShowMessageBox("Database saved to:\n" .. PLUGIN_DB_FILE, "Success", 0)
+    else
+      reaper.ShowMessageBox("Could not save database to:\n" .. PLUGIN_DB_FILE, "Error", 0)
+    end
   end
 end
 
@@ -581,6 +620,7 @@ _G.SGMPluginWrapper = {
   PluginScanner = PluginScanner,
   PluginInstance = PluginInstance,
   PluginAutomation = PluginAutomation,
+  automateSelectedPlugin = automateSelectedPlugin,
 }
 
 -- Run

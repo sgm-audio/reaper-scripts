@@ -89,7 +89,17 @@ def main(argv=None):
                 file=sys.stderr,
             )
             return 2
-        ini_path = os.path.join(resource_path, "reaper-vstplugins64.ini")
+        for candidate in (
+            "reaper-vstplugins64.ini",
+            "reaper-vstplugins-arm64.ini",
+            "reaper-vstplugins.ini",
+        ):
+            candidate_path = os.path.join(resource_path, candidate)
+            if os.path.isfile(candidate_path):
+                ini_path = candidate_path
+                break
+        else:
+            ini_path = os.path.join(resource_path, "reaper-vstplugins64.ini")
 
     plugins = parse_reaper_ini(ini_path)
     if not plugins:

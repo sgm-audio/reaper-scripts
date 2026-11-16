@@ -12,14 +12,20 @@ import urllib.parse
 import urllib.request
 import json
 
-# REAPER injects RPR_* functions into ReaScript's Python globals. They are
-# absent when this module is imported by standalone tools or tests.
-have_reaper = "RPR_GetProjectPath" in globals()
+# REAPER injects RPR_* functions into ReaScript's Python globals (or __main__).
+# They are absent when this module is imported by standalone tools or tests.
+have_reaper = (
+    "RPR_GetProjectPath" in globals()
+    or hasattr(sys.modules.get("__main__"), "RPR_GetProjectPath")
+)
 
 try:
     import tkinter
+    from tkinter import ttk
     have_tk = True
 except ImportError:
+    tkinter = None
+    ttk = None
     have_tk = False
 
 [NOTICE, WARNING, ERROR, NONE] = range(4)
@@ -64,8 +70,12 @@ class ReaperInterface:
             RPR_SetOnlyTrackSelected(track)
             RPR_Main_OnCommand(40406, 0)  # Show volume envelope.
             envelope = RPR_GetTrackEnvelopeByName(track, "Volume")
+        if not envelope:
+            log("Could not access Volume envelope for track.", WARNING)
+            return
+        scaling_mode = RPR_GetEnvelopeScalingMode(envelope)
         for point in volume_data:
-            value = RPR_ScaleToEnvelopeMode(1, point["value"])
+            value = RPR_ScaleToEnvelopeMode(scaling_mode, point["value"])
             RPR_InsertEnvelopePoint(envelope, point["time"], value, 0, 0.0, False, True)
         RPR_Envelope_SortPoints(envelope)
 
@@ -78,23 +88,38 @@ class ReaperInterface:
             RPR_SetOnlyTrackSelected(track)
             RPR_Main_OnCommand(40407, 0)  # Show pan envelope.
             envelope = RPR_GetTrackEnvelopeByName(track, "Pan")
+        if not envelope:
+            log("Could not access Pan envelope for track.", WARNING)
+            return
         for point in panning_data:
             RPR_InsertEnvelopePoint(envelope, point["time"], point["value"], 0, 0.0, False, True)
         RPR_Envelope_SortPoints(envelope)
 
     def create_item(self, track, src, offset, pos, dur):
+        if not src or not os.path.isfile(src):
+            log("Skipping missing media source: %s" % (src or "(empty)"), WARNING)
+            return None
         RPR_SetOnlyTrackSelected(self.insertion_track)
-        RPR_MoveEditCursor(-1000, False)
-        RPR_InsertMedia(src, 0)
+        RPR_SetEditCurPos(0.0, False, False)
+        inserted = RPR_InsertMedia(src, 0)
+        if not inserted:
+            log("RPR_InsertMedia failed for: %s" % src, WARNING)
+            return None
         item = RPR_GetTrackMediaItem(self.insertion_track, 0)
+        if not item:
+            log("Inserted media item not found for: %s" % src, WARNING)
+            return None
         RPR_MoveMediaItemToTrack(item, track)
         RPR_SetMediaItemInfo_Value(item, "D_POSITION", pos)
         RPR_SetMediaItemInfo_Value(item, "D_LENGTH", dur)
         take = RPR_GetMediaItemTake(item, 0)
-        RPR_SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offset)
+        if take:
+            RPR_SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offset)
         return item
 
     def set_item_fades(self, item, fadein=None, fadeout=None, fadeintype=0, fadeouttype=0):
+        if not item:
+            return
         if fadein:
             RPR_SetMediaItemInfo_Value(item, "D_FADEINLEN", fadein)
             RPR_SetMediaItemInfo_Value(item, "C_FADEINSHAPE", fadeintype)
@@ -103,7 +128,8 @@ class ReaperInterface:
             RPR_SetMediaItemInfo_Value(item, "C_FADEOUTSHAPE", fadeouttype)
 
     def set_item_volume(self, item, volume):
-        RPR_SetMediaItemInfo_Value(item, "D_VOL", volume)
+        if item:
+            RPR_SetMediaItemInfo_Value(item, "D_VOL", volume)
 
     def create_marker(self, pos, name="", colour=None):
         colour_code = 0
@@ -112,45 +138,56 @@ class ReaperInterface:
         RPR_AddProjectMarker2(0, False, pos, 0.0, name, 0, colour_code)
 
     def build_project(self, data):
+        saved_cursor = RPR_GetCursorPosition()
+        RPR_Undo_BeginBlock()
+        RPR_PreventUIRefresh(1)
         self.insertion_track = self.create_track("Insertion")
+        try:
+            for track_data in data["tracks"]:
+                track = self.create_track(track_data["name"])
 
-        for track_data in data["tracks"]:
-            track = self.create_track(track_data["name"])
+                if "volume" in track_data:
+                    self.set_track_volume(track, track_data["volume"])
+                if "panning" in track_data:
+                    self.set_track_panning(track, track_data["panning"])
+                if "volume_envelope" in track_data:
+                    self.set_track_volume_envelope(track, track_data["volume_envelope"])
+                if "panning_envelope" in track_data:
+                    self.set_track_panning_envelope(track, track_data["panning_envelope"])
 
-            if "volume" in track_data:
-                self.set_track_volume(track, track_data["volume"])
-            if "panning" in track_data:
-                self.set_track_panning(track, track_data["panning"])
-            if "volume_envelope" in track_data:
-                self.set_track_volume_envelope(track, track_data["volume_envelope"])
-            if "panning_envelope" in track_data:
-                self.set_track_panning_envelope(track, track_data["panning_envelope"])
-
-            if "items" not in track_data: continue
-            for item_data in track_data["items"]:
-                item = self.create_item(
-                    track,
-                    item_data["source"],
-                    item_data["offset"],
-                    item_data["position"],
-                    item_data["duration"]
-                )
-                if "fadein" in item_data or "fadeout" in item_data:
-                    self.set_item_fades(
-                        item,
-                        item_data.get("fadein", None),
-                        item_data.get("fadeout", None),
-                        item_data.get("fadeintype", 0),
-                        item_data.get("fadeouttype", 0)
+                if "items" not in track_data:
+                    continue
+                for item_data in track_data["items"]:
+                    item = self.create_item(
+                        track,
+                        item_data["source"],
+                        item_data["offset"],
+                        item_data["position"],
+                        item_data["duration"]
                     )
-                if "volume" in item_data:
-                    self.set_item_volume(item, item_data["volume"])
+                    if not item:
+                        continue
+                    if "fadein" in item_data or "fadeout" in item_data:
+                        self.set_item_fades(
+                            item,
+                            item_data.get("fadein", None),
+                            item_data.get("fadeout", None),
+                            item_data.get("fadeintype", 0),
+                            item_data.get("fadeouttype", 0)
+                        )
+                    if "volume" in item_data:
+                        self.set_item_volume(item, item_data["volume"])
 
-        for marker_data in data["markers"]:
-            self.create_marker(marker_data["position"], marker_data.get("name", ""), marker_data.get("colour", None))
-
-        RPR_DeleteTrack(self.insertion_track)
-        self.insertion_track = None
+            for marker_data in data["markers"]:
+                self.create_marker(marker_data["position"], marker_data.get("name", ""), marker_data.get("colour", None))
+        finally:
+            if self.insertion_track:
+                RPR_DeleteTrack(self.insertion_track)
+                self.insertion_track = None
+            RPR_SetEditCurPos(saved_cursor, False, False)
+            RPR_PreventUIRefresh(-1)
+            RPR_Undo_EndBlock("Import AAF", -1)
+            RPR_UpdateArrange()
 
 
 
@@ -207,7 +244,7 @@ class AAFInterface:
 
     def get_linked_essence(self, mob):
         try:
-            url = mob.descriptor.locator.pop()["URLString"].value
+            url = mob.descriptor.locator[0]["URLString"].value
             # file:///C%3a/Users/user/My%20video.mp4
             url = urllib.parse.urlparse(url)
             url = url.netloc + url.path
@@ -273,9 +310,11 @@ class AAFInterface:
                     self.essence_data[master_mob.name][slot.slot_id] = self.get_linked_essence(source_mob)
                     continue
                 if source_mob.essence:
-                    filename = os.path.join(target, master_mob.name + slot.name + ".wav")
+                    raw_name = "%s_%s" % (master_mob.name or "mob", slot.name or str(slot.slot_id))
+                    safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in raw_name).strip(" .") or "essence"
+                    filename = os.path.join(target, safe_name + ".wav")
                     if callback:
-                        callback("Extracting %s..." % (master_mob.name + slot.name + ".wav"))
+                        callback("Extracting %s..." % (safe_name + ".wav"))
                     self.essence_data[master_mob.name][slot.slot_id] = self.extract_embedded_essence(source_mob, filename)
                 else:
                     self.essence_data[master_mob.name][slot.slot_id] = self.get_linked_essence(source_mob)
@@ -606,15 +645,16 @@ class UserInteraction:
         label = tkinter.Label(frame, text="")
         label.grid(column=0, row=0, sticky="NW")
 
-        progressbar = tkinter.ttk.Progressbar(frame, mode="determinate", maximum=item_count+1, length=500)
+        progressbar = ttk.Progressbar(frame, mode="determinate", maximum=item_count+1, length=500)
         progressbar.grid(column=0, row=1, sticky="WE")
 
-        action(update_call)
         try:
-            window.destroy()
-            window.mainloop()
-        except Exception:
-            pass
+            action(update_call)
+        finally:
+            try:
+                window.destroy()
+            except Exception:
+                pass
 
     @staticmethod
     def get_composition(composition_list):
@@ -685,12 +725,12 @@ class UserInteraction:
 
     @staticmethod
     def get_composition_awkward(composition_list):
-        while True:
-            for i, comp in enumerate(composition_list):
-                message = "Do you want to import composition %s?" % comp
-                result = RPR_MB(message, "Select composition", 4)
-                if result == 6:
-                    return i
+        for i, comp in enumerate(composition_list):
+            message = "Do you want to import composition %s?" % comp
+            result = RPR_MB(message, "Select composition", 4)
+            if result == 6:
+                return i
+        return None
 
 def import_aaf():
     global log_level
@@ -750,6 +790,9 @@ def import_aaf():
         composition_id = 0
         if len(composition_list) > 1:
             composition_id = UserInteraction.get_composition(composition_list)
+            if composition_id is None:
+                log("AAF import cancelled.", NOTICE)
+                return False
         composition = aaf_interface.get_composition(composition_id)
 
         if have_reaper:

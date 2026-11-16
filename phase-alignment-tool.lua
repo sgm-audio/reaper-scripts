@@ -113,7 +113,9 @@ end
 
 local function nudgeItem(item, time_offset)
   local current_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-  reaper.SetMediaItemInfo_Value(item, "D_POSITION", current_pos + time_offset)
+  local new_pos = math.max(0.0, current_pos + time_offset)
+  reaper.SetMediaItemInfo_Value(item, "D_POSITION", new_pos)
+  return new_pos - current_pos
 end
 
 -- ===================================
@@ -176,23 +178,56 @@ local function alignSelectedTracks()
     return
   end
 
-  -- Step 2: Align all tracks to the earliest transient
-  reaper.Undo_BeginBlock()
-  reaper.ShowConsoleMsg("\n=== ALIGNING TRACKS ===\n")
-  reaper.ShowConsoleMsg("Reference time: " .. string.format("%.4fs", earliest_transient) .. "\n\n")
-
-  for i, data in ipairs(track_data) do
+  local planned_moves = {}
+  for _, data in ipairs(track_data) do
     if data.transient_time then
       local offset = earliest_transient - data.transient_time
-
       if math.abs(offset) > CONFIG.alignment_precision then
-        nudgeItem(data.item, offset)
-        reaper.ShowConsoleMsg(string.format("  ✓ %s: Adjusted by %.4fs (%.2f samples @ 48kHz)\n",
-          data.name, offset, offset * 48000))
-      else
-        reaper.ShowConsoleMsg(string.format("  ✓ %s: Already aligned\n", data.name))
+        table.insert(planned_moves, {data = data, offset = offset})
       end
     end
+  end
+
+  if #planned_moves == 0 then
+    reaper.ShowConsoleMsg("\n✓ All analyzed items are already aligned within precision.\n")
+    return
+  end
+
+  local answer = reaper.ShowMessageBox(
+    string.format("Align %d track(s) (first item per track) to earliest transient at %.4fs?",
+      #planned_moves, earliest_transient),
+    "Phase Alignment", 1)
+  if answer ~= 1 then
+    reaper.ShowConsoleMsg("Phase alignment cancelled.\n")
+    return
+  end
+
+  -- Step 2: Align all tracks to the earliest transient
+  reaper.Undo_BeginBlock()
+  reaper.PreventUIRefresh(1)
+  local ok, err = pcall(function()
+    reaper.ShowConsoleMsg("\n=== ALIGNING TRACKS ===\n")
+    reaper.ShowConsoleMsg("Reference time: " .. string.format("%.4fs", earliest_transient) .. "\n\n")
+
+    for _, data in ipairs(track_data) do
+      if data.transient_time then
+        local offset = earliest_transient - data.transient_time
+        if math.abs(offset) > CONFIG.alignment_precision then
+          local actual_offset = nudgeItem(data.item, offset)
+          reaper.ShowConsoleMsg(string.format("  ✓ %s: Adjusted by %.4fs\n", data.name, actual_offset))
+        else
+          reaper.ShowConsoleMsg(string.format("  ✓ %s: Already aligned\n", data.name))
+        end
+      end
+    end
+  end)
+  reaper.PreventUIRefresh(-1)
+  reaper.Undo_EndBlock("Align Guitar Tracks (Phase)", -1)
+  reaper.UpdateArrange()
+
+  if not ok then
+    reaper.ShowMessageBox("Phase alignment failed:\n" .. tostring(err), "Phase Alignment", 0)
+    return
   end
 
   reaper.ShowConsoleMsg("\n✅ Phase alignment complete!\n")
@@ -200,9 +235,6 @@ local function alignSelectedTracks()
   reaper.ShowConsoleMsg("  1. Check alignment: Play and listen for a tight 'wall'\n")
   reaper.ShowConsoleMsg("  2. Mono test: Click Mono on master - should sound louder, not thinner\n")
   reaper.ShowConsoleMsg("  3. Add amp sims to your DI tracks\n\n")
-
-  reaper.Undo_EndBlock("Align Guitar Tracks (Phase)", -1)
-  reaper.UpdateArrange()
 end
 
 -- ===================================
@@ -281,18 +313,27 @@ local function nudgeSelectedItems(direction, amount)
   end
 
   reaper.Undo_BeginBlock()
+  reaper.PreventUIRefresh(1)
 
   local nudge_amount = amount * direction
+  local ok, err = pcall(function()
+    for i = 0, num_items - 1 do
+      local item = reaper.GetSelectedMediaItem(0, i)
+      if item then
+        nudgeItem(item, nudge_amount)
+      end
+    end
+  end)
 
-  for i = 0, num_items - 1 do
-    local item = reaper.GetSelectedMediaItem(0, i)
-    nudgeItem(item, nudge_amount)
-  end
-
-  reaper.ShowConsoleMsg(string.format("Nudged %d items by %.4fs\n", num_items, nudge_amount))
-
+  reaper.PreventUIRefresh(-1)
   reaper.Undo_EndBlock("Nudge Items", -1)
   reaper.UpdateArrange()
+
+  if not ok then
+    reaper.ShowMessageBox("Nudge failed:\n" .. tostring(err), "Phase Alignment", 0)
+    return
+  end
+  reaper.ShowConsoleMsg(string.format("Nudged %d items by %.4fs\n", num_items, nudge_amount))
 end
 
 -- ===================================
@@ -309,8 +350,10 @@ local function showMenu()
   menu = menu .. "Nudge Right 0.1ms (fine)|"
   menu = menu .. "Settings..."
 
+  if gfx.init then gfx.init("", 0, 0, 0, 0, 0) end
   gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
   local result = gfx.showmenu(menu)
+  if gfx.quit then gfx.quit() end
 
   if result == 1 then
     alignSelectedTracks()

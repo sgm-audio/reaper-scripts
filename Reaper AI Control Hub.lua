@@ -69,6 +69,9 @@ end
 function AIPluginBridge:_detect_plugin_type(fx_index)
     -- Detect plugin format
     local retval, fx_name = reaper.TrackFX_GetFXName(reaper.GetMasterTrack(0), fx_index, "")
+    if not retval or not fx_name then
+        return "Unknown"
+    end
     local lower_name = fx_name:lower()
 
     if lower_name:find(".vst3", 1, true) then
@@ -149,6 +152,15 @@ function AIPluginBridge:setup_audiomovers_bridge()
     msg("4. Route processed audio back to REAPER")
 end
 
+local function json_string(value)
+    local escaped = tostring(value or ""):gsub("\\", "\\\\"):gsub('"', '\\"')
+    escaped = escaped:gsub("%c", function(char)
+        local replacements = {["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t"}
+        return replacements[char] or string.format("\\u%04X", string.byte(char))
+    end)
+    return '"' .. escaped .. '"'
+end
+
 function AIPluginBridge:create_ai_routing_template()
     msg("Creating AI routing template...")
     
@@ -193,22 +205,25 @@ function AIPluginBridge:create_ai_routing_template()
         
         for i, preset in ipairs(routing_presets) do
             file:write("    {\n")
-            file:write('      "name": "' .. preset.name .. '",\n')
-            file:write('      "description": "' .. preset.description .. '",\n')
+            file:write('      "name": ' .. json_string(preset.name) .. ',\n')
+            file:write('      "description": ' .. json_string(preset.description) .. ',\n')
             file:write('      "tracks": [\n')
             
             for j, track in ipairs(preset.tracks) do
                 file:write("        {\n")
-                for key, value in pairs(track) do
-                    file:write('          "' .. key .. '": "' .. tostring(value) .. '"')
-                    if next(track, key) then
+                local keys = {}
+                for key in pairs(track) do table.insert(keys, key) end
+                table.sort(keys)
+                for k_idx, key in ipairs(keys) do
+                    file:write('          ' .. json_string(key) .. ': ' .. json_string(track[key]))
+                    if k_idx < #keys then
                         file:write(",\n")
                     else
                         file:write("\n")
                     end
                 end
                 file:write("        }")
-                if next(preset.tracks, j) then
+                if j < #preset.tracks then
                     file:write(",\n")
                 else
                     file:write("\n")
@@ -217,7 +232,7 @@ function AIPluginBridge:create_ai_routing_template()
             
             file:write("      ]\n")
             file:write("    }")
-            if next(routing_presets, i) then
+            if i < #routing_presets then
                 file:write(",\n")
             else
                 file:write("\n")
@@ -298,6 +313,11 @@ function ExternalToolLauncher:launch_external_processing(track_indices, tool_typ
         end
     end
     
+    if #tracks_to_process == 0 then
+        msg("Select at least one track before generating external render targets.")
+        return {}
+    end
+
     -- REAPER's Lua API has no portable one-call stem renderer. Print exact
     -- manual render targets instead of claiming that files were exported.
     local project_path = reaper.GetProjectPath(0)
@@ -390,8 +410,10 @@ function AIHubController:show_interface()
         "ReWire Setup Notes|" ..
         "OmniBridge Setup Notes|" ..
         "External Processing Instructions"
+    if gfx.init then gfx.init("", 0, 0, 0, 0, 0) end
     gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
     local choice = gfx.showmenu(menu)
+    if gfx.quit then gfx.quit() end
     if choice == 1 then self:run_discovery_mode()
     elseif choice == 2 then self:run_rewire_mode()
     elseif choice == 3 then self:run_omnibridge_mode()

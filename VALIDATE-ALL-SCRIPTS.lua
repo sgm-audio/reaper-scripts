@@ -59,5 +59,5 @@ if fail_count > 0 then
     reaper.ShowConsoleMsg("  " .. err_info.error .. "\n\n")
   end
 else
-  reaper.ShowConsoleMsg("\n✅ ALL SCRIPTS ARE VALID - SAFE TO RUN!\n")
+  reaper.ShowConsoleMsg("\n✅ ALL SCRIPTS PASSED SYNTAX CHECK (loadfile only; runtime behavior is not verified).\n")
 end

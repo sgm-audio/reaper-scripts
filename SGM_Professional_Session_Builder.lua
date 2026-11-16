@@ -107,7 +107,7 @@ local function createRouting(tracks)
     if source.bus then
       table.insert(routing.sends, {
         source = source.name, destination = source.bus,
-        level_db = source.type == "mix_bus" and 0 or 0, pan = 0, mode = 0,
+        level_db = 0, pan = 0, mode = 0,
       })
     end
     if source.parallel then
@@ -215,6 +215,15 @@ function SessionImplementationEngine:implementSession(session)
     self:addPlugins(session.tracks, session.complexity)
     session.sends_created = self:implementRouting(session.routing)
   end)
+  if not ok and reaper.DeleteTrack then
+    for i = #session.tracks, 1, -1 do
+      local created_track = session.tracks[i]._track
+      if created_track then
+        reaper.DeleteTrack(created_track)
+        session.tracks[i]._track = nil
+      end
+    end
+  end
   reaper.PreventUIRefresh(-1)
   reaper.Undo_EndBlock("SGM: " .. session.name, -1)
   reaper.TrackList_AdjustWindows(false)
@@ -263,8 +272,10 @@ local function showProfessionalBuilderMenu()
     "Mastering (2 tracks)|" ..
     "Stem Separation (6 tracks)|" ..
     "Full Production Without FX"
+  if gfx.init then gfx.init("", 0, 0, 0, 0, 0) end
   gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
   local result = gfx.showmenu(menu)
+  if gfx.quit then gfx.quit() end
   if result == 1 then buildProfessionalSession("full_production", "stock")
   elseif result == 2 then buildProfessionalSession("mixing", "stock")
   elseif result == 3 then buildProfessionalSession("mastering", "stock")

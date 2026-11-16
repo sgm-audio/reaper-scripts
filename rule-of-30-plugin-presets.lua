@@ -409,12 +409,15 @@ local PLUGIN_SEARCH = {
 -- ===================================
 
 function findPlugin(track, plugin_name)
+  if not track or type(plugin_name) ~= "string" or plugin_name == "" then
+    return nil
+  end
   -- Try to find plugin by name (case-insensitive)
   local fx_count = reaper.TrackFX_GetCount(track)
 
   for i = 0, fx_count - 1 do
-    local _, fx_name = reaper.TrackFX_GetFXName(track, i, "")
-    if fx_name:lower():find(plugin_name:lower(), 1, true) then
+    local retval, fx_name = reaper.TrackFX_GetFXName(track, i, "")
+    if retval and fx_name and fx_name:lower():find(plugin_name:lower(), 1, true) then
       return i
     end
   end
@@ -423,6 +426,9 @@ function findPlugin(track, plugin_name)
 end
 
 function getChainForTrack(track_name)
+  if type(track_name) ~= "string" or track_name == "" then
+    return nil
+  end
   -- Match track name to plugin chain configuration
 
   -- Drums
@@ -438,7 +444,7 @@ function getChainForTrack(track_name)
     return PLUGIN_CHAINS.drums.snare_bottom
   elseif track_name:find("Glitch Snare") then
     return PLUGIN_CHAINS.drums.glitch_snare
-  elseif track_name:find("Tom") then
+  elseif track_name:match("%f[%a][Tt]oms?%f[%A]") then
     return PLUGIN_CHAINS.drums.toms
   elseif track_name:find("OH") or track_name:find("Overhead") then
     return PLUGIN_CHAINS.drums.overheads
