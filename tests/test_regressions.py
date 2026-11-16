@@ -123,6 +123,14 @@ class SunoWorkflowRegressions(unittest.TestCase):
         finally:
             os.chdir(old_cwd)
 
+    def test_suno_rpp_uses_valid_mutesolo_syntax(self):
+        with patch("suno_workflow_helper.YourMT3StemSeparator", FakeSeparator):
+            result = self.workflow.process_suno_track(str(self.input), "MuteCheck")
+        self.assertTrue(result.success, result.error_message)
+        project = Path(result.project_file).read_text(encoding="utf-8")
+        self.assertIn("MUTESOLO 1 0 0", project)
+        self.assertNotIn("B_MUTE", project)
+
 
 class PerformanceRegressions(unittest.TestCase):
     def test_executor_keyword_arguments(self):
@@ -227,14 +235,6 @@ class PluginAndCacheRegressions(unittest.TestCase):
             parsed = parse_reaper_ini(str(cache))
             self.assertIn("Delay, Wide (Vendor)", parsed)
             self.assertEqual(parsed["Delay, Wide (Vendor)"]["type"], "VST3")
-
-    def test_suno_rpp_uses_valid_mutesolo_syntax(self):
-        with patch("suno_workflow_helper.YourMT3StemSeparator", FakeSeparator):
-            result = self.workflow.process_suno_track(str(self.input), "MuteCheck")
-        self.assertTrue(result.success, result.error_message)
-        project = Path(result.project_file).read_text(encoding="utf-8")
-        self.assertIn("MUTESOLO 1 0 0", project)
-        self.assertNotIn("B_MUTE", project)
 
     def test_reaper_interface_build_project_balances_undo_and_cleans_up(self):
         import reaper_ai_integration as rai

@@ -79,17 +79,19 @@ for path, first in pairs({
   end
   load_script(path, menu_env)
 end
-local position, undo = 2, 0
+local position, undo, refresh = 2, 0, 0
 api.CountSelectedMediaItems = function() return 1 end
 api.GetSelectedMediaItem = function() return {} end
 api.GetMediaItemInfo_Value = function() return position end
 api.SetMediaItemInfo_Value = function(_, key, value) position = value end
 api.Undo_BeginBlock = function() undo = undo + 1 end
 api.Undo_EndBlock = function() undo = undo - 1 end
+api.PreventUIRefresh = function(d) refresh = refresh + d end
 api.UpdateArrange = function() end
 env.gfx.showmenu = function() return 6 end
 load_script("phase-alignment-tool.lua", env)
-check(math.abs(position - 2.0001) < 1e-9 and undo == 0, "row 6 must nudge right 0.1ms with balanced undo")
+check(math.abs(position - 2.0001) < 1e-9 and undo == 0 and refresh == 0,
+  "row 6 must nudge right 0.1ms with balanced undo and PreventUIRefresh")
 
 -- plugin-wrapper.lua: automateSelectedPlugin bitmask guard, confirmation, undo, and PreventUIRefresh
 local pw_env = environment()
