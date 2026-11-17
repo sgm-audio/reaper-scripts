@@ -2,69 +2,114 @@
 -- Usage: lua5.4 tests/lua_smoke.lua <script.lua> [more.lua ...]
 -- Exit codes: 0 = all ran clean, 2 = at least one load/runtime error.
 
-local function make_stub(name)
-  local t = {}
-  setmetatable(t, {
-    __index = function(_, k) return make_stub(name .. "." .. tostring(k)) end,
-    __call = function(_, ...) return make_stub(name .. "()") end,
-    __tostring = function() return name end,
-    __concat = function(a, b) return tostring(a) .. tostring(b) end,
-    __len = function() return 0 end,
-    __unm = function() return 0 end,
-    __add = function() return 0 end, __sub = function() return 0 end,
-    __mul = function() return 0 end, __div = function() return 0 end,
-    __mod = function() return 0 end, __pow = function() return 0 end,
-    __idiv = function() return 0 end,
-    __band = function() return 0 end, __bor = function() return 0 end,
-    __bxor = function() return 0 end, __bnot = function() return 0 end,
-    __shl = function() return 0 end, __shr = function() return 0 end,
-    __eq = function() return false end,
-    __lt = function() return false end, __le = function() return false end,
-  })
-  return t
-end
-
-reaper = make_stub("reaper")
-gfx = make_stub("gfx")
-ImGui = make_stub("ImGui")
-
--- Return real scalar values for APIs used in loop bounds, comparisons, paths,
--- and menus. A universal callable table masks bugs and never terminates enums.
 local temp_root = os.tmpname()
 os.remove(temp_root)
 os.execute("mkdir -p '" .. temp_root:gsub("'", "'\\''") .. "'")
 
-function reaper.GetResourcePath() return temp_root end
-function reaper.GetProjectPath() return temp_root end
-function reaper.GetOS() return "Linux" end
-function reaper.EnumerateFiles(_, _) return nil end
-function reaper.EnumerateSubdirectories(_, _) return nil end
-function reaper.CountTracks(_) return 0 end
-function reaper.CountSelectedTracks(_) return 0 end
-function reaper.CountSelectedMediaItems(_) return 0 end
-function reaper.TrackFX_GetCount(_) return 0 end
-function reaper.GetMasterTrack(_) return make_stub("master") end
-function reaper.GetTrack(_, _) return nil end
-function reaper.GetSelectedTrack(_, _) return nil end
-function reaper.GetLastTouchedFX() return false, 0, -1, -1 end
-function reaper.GetSetMediaTrackInfo_String(_, _, _, _) return false, "" end
-function reaper.GetTrackName(_) return false, "" end
-function reaper.ShowMessageBox(_, _, _) return 0 end
-function reaper.ShowConsoleMsg(_) end
-function reaper.ClearConsole() end
-function reaper.time_precise() return os.clock() end
-function reaper.ColorToNative(_, _, _) return 0 end
-function reaper.file_exists(path)
-  local file = io.open(path, "r")
-  if file then file:close() return true end
-  return false
-end
-function reaper.RecursiveCreateDirectory(path, _)
-  os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
-  return 1
-end
-function gfx.showmenu(_) return 0 end
-gfx.mouse_x, gfx.mouse_y = 0, 0
+reaper = {
+  GetResourcePath = function() return temp_root end,
+  GetProjectPath = function() return temp_root end,
+  GetOS = function() return "Linux" end,
+  EnumerateFiles = function(_, _) return nil end,
+  EnumerateSubdirectories = function(_, _) return nil end,
+  CountTracks = function(_) return 0 end,
+  CountSelectedTracks = function(_) return 0 end,
+  CountSelectedMediaItems = function(_) return 0 end,
+  CountTrackMediaItems = function(_) return 0 end,
+  TrackFX_GetCount = function(_) return 0 end,
+  GetMasterTrack = function(_) return {id = "master"} end,
+  GetTrack = function(_, _) return nil end,
+  GetSelectedTrack = function(_, _) return nil end,
+  GetLastTouchedFX = function() return false, 0, -1, -1 end,
+  GetSetMediaTrackInfo_String = function(_, _, _, _) return false, "" end,
+  GetTrackName = function(_) return false, "" end,
+  ShowMessageBox = function(_, _, _) return 0 end,
+  ShowConsoleMsg = function(_) end,
+  ClearConsole = function() end,
+  time_precise = function() return os.clock() end,
+  ColorToNative = function(_, _, _) return 0 end,
+  file_exists = function(path)
+    local file = io.open(path, "r")
+    if file then file:close() return true end
+    return false
+  end,
+  RecursiveCreateDirectory = function(path, _)
+    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+    return 1
+  end,
+  Undo_BeginBlock = function() end,
+  Undo_EndBlock = function(_, _) end,
+  PreventUIRefresh = function(_) end,
+  UpdateArrange = function() end,
+  TrackList_AdjustWindows = function(_) end,
+  SetTrackColor = function(_, _) end,
+  SetMediaTrackInfo_Value = function(_, _, _) end,
+  InsertTrackAtIndex = function(_, _) end,
+  DeleteTrack = function(_) end,
+  TrackFX_AddByName = function(_, _, _, _) return 0 end,
+  TrackFX_GetFXName = function(_, _, _) return false, "" end,
+  TrackFX_GetNumParams = function(_, _) return 0 end,
+  TrackFX_GetParamName = function(_, _, _) return false, "" end,
+  TrackFX_GetParam = function(_, _, _) return 0 end,
+  TrackFX_GetFormattedParamValue = function(_, _, _, _) return false, "" end,
+  TrackFX_GetNamedConfigParm = function(_, _, _, _) return false, "" end,
+  TrackFX_GetPresetIndex = function(_, _) return 0, 0 end,
+  TrackFX_SetPresetByIndex = function(_, _, _) return true end,
+  TrackFX_SetPreset = function(_, _, _) return true end,
+  TrackFX_SetParam = function(_, _, _, _) return true end,
+  TrackFX_SetEnabled = function(_, _, _) end,
+  TrackFX_GetEnabled = function(_, _) return true end,
+  TrackFX_Delete = function(_, _) return true end,
+  CreateTrackSend = function(_, _) return -1 end,
+  SetTrackSendInfo_Value = function(_, _, _, _, _) end,
+  GetActiveTake = function(_) return nil end,
+  GetMediaItemTake_Source = function(_) return nil end,
+  GetMediaSourceSampleRate = function(_) return 44100 end,
+  GetMediaSourceNumChannels = function(_) return 2 end,
+  CreateTakeAudioAccessor = function(_) return nil end,
+  DestroyAudioAccessor = function(_) end,
+  GetAudioAccessorStartTime = function(_) return 0 end,
+  GetAudioAccessorEndTime = function(_) return 0 end,
+  GetAudioAccessorSamples = function(_, _, _, _, _, _) return 0 end,
+  new_array = function(n)
+    local b = {}
+    for i = 1, n do b[i] = 0 end
+    return b
+  end,
+  GetMediaItemInfo_Value = function(_, _) return 0 end,
+  SetMediaItemInfo_Value = function(_, _, _) end,
+  GetSelectedMediaItem = function(_, _) return nil end,
+  GetTrackMediaItem = function(_, _) return nil end,
+  GetFXEnvelope = function(_, _, _, _) return nil end,
+  GetCursorPosition = function() return 0 end,
+  InsertEnvelopePoint = function(_, _, _, _, _, _, _) return true end,
+  Envelope_SortPoints = function(_) end,
+  Master_GetTempo = function() return 120 end,
+}
+
+setmetatable(reaper, {
+  __index = function(_, k)
+    error("STRICT MOCK: Attempted access to undefined reaper API: " .. tostring(k), 2)
+  end,
+})
+
+gfx = {
+  mouse_x = 0, mouse_y = 0, x = 0, y = 0,
+  showmenu = function(_) return 0 end,
+  init = function() end,
+  quit = function() end,
+}
+setmetatable(gfx, {
+  __index = function(_, k)
+    error("STRICT MOCK: Attempted access to undefined gfx API: " .. tostring(k), 2)
+  end,
+})
+
+ImGui = setmetatable({}, {
+  __index = function(_, k)
+    error("STRICT MOCK: Attempted access to undefined ImGui API: " .. tostring(k), 2)
+  end,
+})
 
 local fail = 0
 for _, filename in ipairs(arg) do

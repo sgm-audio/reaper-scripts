@@ -131,6 +131,68 @@ class SunoWorkflowRegressions(unittest.TestCase):
         self.assertIn("MUTESOLO 1 0 0", project)
         self.assertNotIn("B_MUTE", project)
 
+    def test_rpp_item_placement_duration_and_path_portability(self):
+        # Verify ITEM structure, exact duration calculation, POSITION 0, and portable / paths
+        frames_count = 88200  # exactly 2.0 seconds at 44100
+        test_wav = self.root / "two_seconds.wav"
+        write_wav(test_wav, frames=frames_count)
+
+        class TwoSecondSeparator:
+            def __init__(self, output_dir):
+                self.output_dir = output_dir
+
+            def separate(self, _):
+                paths = {}
+                for name in ("vocals", "drums", "bass", "other"):
+                    path = Path(self.output_dir) / f"{name}.wav"
+                    write_wav(path, frames=frames_count)
+                    paths[name] = str(path)
+                return paths
+
+        with patch("suno_workflow_helper.YourMT3StemSeparator", TwoSecondSeparator):
+            result = self.workflow.process_suno_track(str(test_wav), "PrecisionCheck")
+        self.assertTrue(result.success, result.error_message)
+
+        content = Path(result.project_file).read_text(encoding="utf-8")
+        lines = [line.strip() for line in content.splitlines()]
+
+        # Assert no backslashes in any FILE statement
+        file_lines = [l for l in lines if l.startswith("FILE ")]
+        self.assertEqual(len(file_lines), 5)  # 4 stems + 1 original
+        for fl in file_lines:
+            self.assertNotIn("\\", fl, f"Non-portable backslash in RPP FILE line: {fl}")
+            self.assertIn('"', fl)
+
+        # Assert position 0 and duration is 2.000000000
+        item_positions = [l for l in lines if l.startswith("POSITION ")]
+        self.assertEqual(len(item_positions), 5)
+        for pos in item_positions:
+            self.assertEqual(pos, "POSITION 0")
+
+        item_lengths = [l for l in lines if l.startswith("LENGTH ")]
+        self.assertEqual(len(item_lengths), 5)
+        for length in item_lengths:
+            val = float(length.split()[1])
+            self.assertAlmostEqual(val, 2.0, places=4)
+
+        # Ensure no absolute leak
+        self.assertNotIn(str(self.root).replace("\\", "/"), content)
+
+    def test_workflow_fails_cleanly_on_unwritable_directory(self):
+        # Simulating unwriteable destination folder
+        unwritable_root = self.root / "locked_output"
+        unwritable_root.mkdir()
+        unwritable_root.chmod(0o444)
+        try:
+            locked_config = BaseConfig(paths=PathConfig(output_dir=str(unwritable_root)))
+            wf = SunoReaperWorkflow(config=locked_config)
+            with patch("suno_workflow_helper.YourMT3StemSeparator", FakeSeparator):
+                result = wf.process_suno_track(str(self.input), "Locked")
+            self.assertFalse(result.success)
+            self.assertIn("Permission denied", result.error_message)
+        finally:
+            unwritable_root.chmod(0o777)
+
 
 class PerformanceRegressions(unittest.TestCase):
     def test_executor_keyword_arguments(self):

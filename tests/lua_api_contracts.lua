@@ -122,6 +122,13 @@ pw_env.reaper.ShowMessageBox = function() return 1 end
 check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == true and pw_undo == 0 and pw_refresh == 0 and pw_points == 21,
   "confirmed automation must insert 21 points with balanced undo and PreventUIRefresh")
 
+-- plugin-wrapper.lua: GetFXEnvelope returning nil (e.g. non-automatable or locked)
+pw_env.reaper.GetFXEnvelope = function() return nil end
+pw_points = 0
+local pw_null_env_res = pw_env.SGMPluginWrapper.automateSelectedPlugin()
+check(pw_null_env_res == false and pw_undo == 0 and pw_refresh == 0 and pw_points == 0,
+  "null envelope must fail cleanly without crashing and keep undo/refresh balanced")
+
 -- SGM_Professional_Session_Builder.lua: rollback partially created tracks on error
 local sb_env = environment()
 load_script("SGM_Professional_Session_Builder.lua", sb_env)
@@ -152,5 +159,69 @@ local sb_full = sb_builder:buildSessionFromAnalysis("full_production", "no_fx")
 local sb_ok = sb_engine:implementSession(sb_full)
 check(sb_ok == false and #sb_tracks == 0 and sb_undo == 0 and sb_refresh == 0,
   "failed session build must roll back partial tracks and balance undo/refresh")
+
+-- phase-alignment-tool.lua: adversarial transient inputs (digital silence, DC offset, sample 0 edge)
+local adv_env = environment()
+load_script("phase-alignment-tool.lua", adv_env)
+local adv_api = adv_env.reaper
+local adv_detector = adv_env.SGMPhaseAlignment.findFirstTransient
+local adv_destroyed, adv_status, adv_accessor = 0, 1, {}
+adv_api.GetActiveTake = function() return {} end
+adv_api.GetMediaItemTake_Source = function() return {} end
+adv_api.GetMediaSourceSampleRate = function() return 1000 end
+adv_api.GetMediaSourceNumChannels = function() return 2 end
+adv_api.CreateTakeAudioAccessor = function() return adv_accessor end
+adv_api.GetMediaItemInfo_Value = function() return 5.0 end
+adv_api.GetAudioAccessorStartTime = function() return 0.0 end
+adv_api.GetAudioAccessorEndTime = function() return 0.1 end
+adv_api.new_array = function(n)
+  local b = {}
+  for i = 1, n do b[i] = 0 end
+  return b
+end
+adv_api.DestroyAudioAccessor = function() adv_destroyed = adv_destroyed + 1 end
+
+-- Case 1: Digital silence (all 0.0) -> must return nil and peak 0
+adv_api.GetAudioAccessorSamples = function(_, rate, count, start, frames, buffer)
+  for i = 1, #buffer do buffer[i] = 0.0 end
+  return 1
+end
+local s_time, s_peak = adv_detector({})
+check(s_time == nil and s_peak == 0, "digital silence must return nil transient and 0 peak")
+check(adv_destroyed == 1, "silence read must destroy accessor")
+
+-- Case 2: Constant DC offset below threshold (0.05, threshold is 0.1) -> must return nil and peak 0.05
+adv_api.GetAudioAccessorSamples = function(_, rate, count, start, frames, buffer)
+  for i = 1, #buffer do buffer[i] = 0.05 end
+  return 1
+end
+local dc_time, dc_peak = adv_detector({})
+check(dc_time == nil and math.abs(dc_peak - 0.05) < 1e-9, "DC offset below threshold must return nil transient")
+
+-- Case 3: Immediate transient at frame 0 (edge boundary) -> transient_time must equal item start position
+adv_api.GetAudioAccessorSamples = function(_, rate, count, start, frames, buffer)
+  for i = 1, #buffer do buffer[i] = 0 end
+  buffer[1] = 0.95  -- frame 0, channel 0
+  return 1
+end
+local edge_time, edge_peak = adv_detector({})
+check(edge_time and math.abs(edge_time - 5.0) < 1e-9, "frame 0 transient must align exactly to item start")
+check(math.abs(edge_peak - 0.95) < 1e-9, "frame 0 peak must be captured")
+
+-- phase-alignment-tool.lua: nudgeItems error branch balances Undo and PreventUIRefresh
+local nudge_undo, nudge_refresh = 0, 0
+adv_api.CountSelectedMediaItems = function() return 1 end
+adv_api.GetSelectedMediaItem = function() return {} end
+adv_api.GetMediaItemInfo_Value = function() return 2.0 end
+adv_api.SetMediaItemInfo_Value = function() error("Simulated disk/API write fault during nudge") end
+adv_api.Undo_BeginBlock = function() nudge_undo = nudge_undo + 1 end
+adv_api.Undo_EndBlock = function() nudge_undo = nudge_undo - 1 end
+adv_api.PreventUIRefresh = function(d) nudge_refresh = nudge_refresh + d end
+adv_api.UpdateArrange = function() end
+adv_api.ShowMessageBox = function() return 0 end
+adv_env.gfx.showmenu = function() return 6 end  -- nudge right 0.1ms
+load_script("phase-alignment-tool.lua", adv_env)
+check(nudge_undo == 0 and nudge_refresh == 0,
+  "nudgeItem failure inside pcall must maintain balanced Undo and PreventUIRefresh")
 
 print(string.format("All %d API contract checks passed", checks))

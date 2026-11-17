@@ -73,6 +73,11 @@ function reaper.InsertTrackAtIndex(index, _)
   table.insert(tracks, index + 1, {name = "", values = {}})
 end
 function reaper.GetTrack(_, index) return tracks[index + 1] end
+function reaper.DeleteTrack(tr)
+  for i = #tracks, 1, -1 do
+    if tracks[i] == tr then table.remove(tracks, i) break end
+  end
+end
 function reaper.GetSetMediaTrackInfo_String(track, key, value, set)
   if set then track.name = value end
   return true, track.name
@@ -180,6 +185,28 @@ for _, session_type in ipairs({"mixing", "mastering", "stem_separation"}) do
   local session, err = SessionBuilder:buildSessionFromAnalysis(session_type, "no_fx")
   check(session ~= nil, "missing session builder " .. session_type .. ": " .. tostring(err))
 end
+
+-- Session builder with pre-existing user tracks in project (adversarial track offset test)
+local pre_existing_count = 5
+tracks = {}
+for i = 1, pre_existing_count do
+  table.insert(tracks, {name = "User Stem " .. i, values = {B_MAINSEND = 1}})
+end
+sends_created = 0
+local pre_engine = _G.SGMSessionBuilder.SessionImplementationEngine:new()
+local pre_session = assert(SessionBuilder:buildSessionFromAnalysis("full_production", "stock"))
+local pre_ok, pre_err = pre_engine:implementSession(pre_session)
+check(pre_ok, "session implementation in pre-existing project failed: " .. tostring(pre_err))
+check(#tracks == pre_existing_count + 25, "total tracks must be pre-existing + session tracks")
+-- Ensure the first 5 tracks remain untouched and retain their original names and settings
+for i = 1, pre_existing_count do
+  check(tracks[i].name == "User Stem " .. i, "existing track " .. i .. " was overwritten or corrupted")
+  check(tracks[i].values.B_MAINSEND == 1, "existing track " .. i .. " mainsend was corrupted")
+end
+-- Verify newly appended tracks are properly named and routed
+check(tracks[pre_existing_count + 1].name == "Drums Input", "first created track name mismatch: " .. tostring(tracks[pre_existing_count + 1].name))
+check(tracks[pre_existing_count + 25].name == "Master", "last created track name mismatch: " .. tostring(tracks[pre_existing_count + 25].name))
+check(sends_created == 31, "sends created in pre-existing project mismatch")
 
 -- Installer manifest must contain only files that actually exist.
 assert(loadfile("reaper-template-installer.lua"))()
