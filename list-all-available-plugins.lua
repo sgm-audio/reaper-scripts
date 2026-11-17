@@ -85,8 +85,8 @@ function PluginScanner:parseCache(ini_path, fallback_type)
   local found = {}
   local file = io.open(ini_path, "r")
   if not file then return found end
-  for line in file:lines() do
-    line = trim(line)
+  for raw_line in file:lines() do
+    local line = trim(raw_line)
     if line ~= "" and not line:match("^%[") then
       local filename, data = line:match("^(.-)=(.*)$")
       if filename and data then
@@ -135,8 +135,13 @@ function PluginScanner:scanFXBrowser()
     {"reaper-vstplugins.ini", "vst"},
     {"reaper-clap-plugins64.ini", "clap"},
     {"reaper-clap-plugins-arm64.ini", "clap"},
+    {"reaper-clap-linux-x86_64.ini", "clap"},
+    {"reaper-clap-linux-aarch64.ini", "clap"},
+    {"reaper-clap-plugins.ini", "clap"},
+    {"reaper-auplugins64.ini", "au"},
     {"reaper-au-plugins64.ini", "au"},
     {"reaper-au-plugins.ini", "au"},
+    {"reaper-lv2plugins64.ini", "lv2"},
     {"reaper-lv2-plugins64.ini", "lv2"},
     {"reaper-lv2-plugins.ini", "lv2"},
   }

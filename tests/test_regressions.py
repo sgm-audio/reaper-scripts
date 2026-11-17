@@ -393,6 +393,42 @@ class PluginAndCacheRegressions(unittest.TestCase):
         self.assertIn(("cursor", 4.5), calls)
         self.assertIn(("scale_mode", 0), calls)
 
+    def test_import_aaf_confirms_when_existing_tracks_present(self):
+        import reaper_ai_integration as rai
+
+        mb_calls = []
+        project_built = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mocks = {
+                "have_reaper": True,
+                "aaf2": object(),
+                "RPR_GetUserFileNameForRead": lambda *_: (True, "dummy.aaf", "", ""),
+                "RPR_GetProjectPath": lambda *_: (temp_dir, 512),
+                "RPR_GetNumTracks": lambda: 3,
+                "RPR_ShowConsoleMsg": lambda msg: None,
+                "RPR_MB": lambda msg, title, typ: mb_calls.append((msg, title, typ)) or 2,  # User clicks Cancel
+            }
+
+            class MockAAF:
+                def open(self, _): return True
+                def get_aaf_metadata(self): return {}
+                def get_embedded_essence_count(self): return 0
+                def extract_essence(self, *args): pass
+                def get_composition_list(self): return ["Comp 1"]
+                def get_composition(self, _): return {"tracks": [], "markers": []}
+                def close(self): pass
+
+            with patch.dict(rai.__dict__, mocks), \
+                 patch.object(rai, "AAFInterface", return_value=MockAAF()), \
+                 patch.object(rai.ReaperInterface, "build_project", lambda self, data: project_built.append(data)):
+                result = rai.import_aaf()
+
+            self.assertFalse(result)
+            self.assertEqual(len(mb_calls), 1)
+            self.assertIn("already contains 3 track(s)", mb_calls[0][0])
+            self.assertEqual(len(project_built), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

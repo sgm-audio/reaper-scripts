@@ -10,12 +10,15 @@ local SCAN_PATHS = {}
 
 -- Platform-specific plugin paths
 if reaper.GetOS() == "Win32" or reaper.GetOS() == "Win64" then
+  local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
+  local prog_files_x86 = os.getenv("ProgramFiles(x86)") or "C:\\Program Files (x86)"
+  local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
   SCAN_PATHS = {
-    "C:\\Program Files\\VSTPlugins",
-    "C:\\Program Files\\Steinberg\\VSTPlugins",
-    "C:\\Program Files\\Common Files\\VST3",
-    "C:\\Program Files\\Common Files\\CLAP",
-    "C:\\Program Files (x86)\\VSTPlugins"
+    prog_files .. "\\VSTPlugins",
+    prog_files .. "\\Steinberg\\VSTPlugins",
+    common_files .. "\\VST3",
+    common_files .. "\\CLAP",
+    prog_files_x86 .. "\\VSTPlugins"
   }
 elseif reaper.GetOS():match("^OSX") then
   SCAN_PATHS = {

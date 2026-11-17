@@ -224,4 +224,29 @@ load_script("phase-alignment-tool.lua", adv_env)
 check(nudge_undo == 0 and nudge_refresh == 0,
   "nudgeItem failure inside pcall must maintain balanced Undo and PreventUIRefresh")
 
+-- phase-alignment-tool.lua: verify undo/refresh balance on execution error with multiple items
+local pa_env = environment()
+pa_env.reaper.GetResourcePath = function() return "/unused-contract-fixture" end
+pa_env.reaper.GetOS = function() return "Linux" end
+load_script("phase-alignment-tool.lua", pa_env)
+local pa_undo, pa_refresh = 0, 0
+pa_env.reaper.Undo_BeginBlock = function() pa_undo = pa_undo + 1 end
+pa_env.reaper.Undo_EndBlock = function() pa_undo = pa_undo - 1 end
+pa_env.reaper.PreventUIRefresh = function(d) pa_refresh = pa_refresh + d end
+pa_env.reaper.UpdateArrange = function() end
+pa_env.reaper.ShowMessageBox = function() return 0 end
+pa_env.reaper.CountSelectedMediaItems = function() return 2 end
+pa_env.reaper.GetSelectedMediaItem = function(_, idx)
+  if idx > 0 then error("Forced nudge error") end
+  return {}
+end
+pa_env.reaper.GetMediaItemInfo_Value = function() return 1.0 end
+pa_env.reaper.SetMediaItemInfo_Value = function() end
+pa_env.gfx.showmenu = function() return 3 end -- Nudge Left 1ms
+local pa_ok, pa_err = pcall(function()
+  load_script("phase-alignment-tool.lua", pa_env)
+end)
+check(pa_undo == 0 and pa_refresh == 0,
+  "phase-alignment-tool multi-item nudge error must balance undo and PreventUIRefresh")
+
 print(string.format("All %d API contract checks passed", checks))

@@ -33,8 +33,9 @@ log_level = WARNING
 
 def log(message, level=NOTICE):
     if log_level > level: return
-    if have_reaper:
-        RPR_ShowConsoleMsg(message + "\n")
+    show_msg = globals().get("RPR_ShowConsoleMsg") or getattr(sys.modules.get("__main__"), "RPR_ShowConsoleMsg", None)
+    if have_reaper and show_msg:
+        show_msg(message + "\n")
     else:
         print(message)
 
@@ -141,8 +142,8 @@ class ReaperInterface:
         saved_cursor = RPR_GetCursorPosition()
         RPR_Undo_BeginBlock()
         RPR_PreventUIRefresh(1)
-        self.insertion_track = self.create_track("Insertion")
         try:
+            self.insertion_track = self.create_track("Insertion")
             for track_data in data["tracks"]:
                 track = self.create_track(track_data["name"])
 
@@ -796,6 +797,17 @@ def import_aaf():
         composition = aaf_interface.get_composition(composition_id)
 
         if have_reaper:
+            existing_tracks = RPR_GetNumTracks()
+            if existing_tracks > 0:
+                answer = RPR_MB(
+                    "The current project already contains %d track(s).\n\n"
+                    "Do you want to import this AAF into the current project?" % existing_tracks,
+                    "Import AAF — Existing Tracks Detected",
+                    1,
+                )
+                if answer != 1:
+                    log("AAF import cancelled by user.", NOTICE)
+                    return False
             reaper_interface.build_project(composition)
         else:
             print(json.dumps(composition))

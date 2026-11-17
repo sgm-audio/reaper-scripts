@@ -269,9 +269,11 @@ function ExternalToolLauncher:_get_tool_paths()
     local paths = {}
     local os_type = reaper.GetOS()
     if os_type == "Win32" or os_type == "Win64" then
-        table.insert(paths, "C:\\Program Files\\AudioMovers\\OmniBridge")
-        table.insert(paths, "C:\\Program Files\\Common Files\\VST3\\AI")
-        table.insert(paths, "C:\\Program Files\\ReWire")
+        local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
+        local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
+        table.insert(paths, prog_files .. "\\AudioMovers\\OmniBridge")
+        table.insert(paths, common_files .. "\\VST3\\AI")
+        table.insert(paths, prog_files .. "\\ReWire")
     elseif os_type:match("^OSX") then
         local home = os.getenv("HOME") or ""
         table.insert(paths, "/Applications/AudioMovers/OmniBridge.app")
@@ -285,6 +287,8 @@ function ExternalToolLauncher:_get_tool_paths()
             table.insert(paths, home .. "/.vst3/AI")
             table.insert(paths, home .. "/.local/share/AudioMovers/OmniBridge")
         end
+        table.insert(paths, "/usr/lib/vst3/AI")
+        table.insert(paths, "/usr/local/lib/vst3/AI")
     end
     -- REAPER resource path works on every OS (forward slashes are portable)
     table.insert(paths, reaper.GetResourcePath() .. "/UserPlugins/AI")
