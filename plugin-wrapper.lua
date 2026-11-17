@@ -6,7 +6,7 @@
 -- Version 1.0
 
 local PLUGIN_DB_FILE = reaper.GetResourcePath() .. "/plugin_database.json"
-local SCAN_PATHS = {}
+local SCAN_PATHS
 
 -- Platform-specific plugin paths
 if reaper.GetOS() == "Win32" or reaper.GetOS() == "Win64" then

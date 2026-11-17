@@ -375,7 +375,10 @@ local function showMenu()
   end
 end
 
-_G.SGMPhaseAlignment = {findFirstTransient = findFirstTransient}
+_G.SGMPhaseAlignment = {
+  findFirstTransient = findFirstTransient,
+  alignSelectedTracks = alignSelectedTracks,
+}
 
 -- Run menu
 showMenu()

@@ -408,7 +408,7 @@ local PLUGIN_SEARCH = {
 -- HELPER FUNCTIONS
 -- ===================================
 
-function findPlugin(track, plugin_name)
+local function findPlugin(track, plugin_name)
   if not track or type(plugin_name) ~= "string" or plugin_name == "" then
     return nil
   end
@@ -425,7 +425,7 @@ function findPlugin(track, plugin_name)
   return nil
 end
 
-function getChainForTrack(track_name)
+local function getChainForTrack(track_name)
   if type(track_name) ~= "string" or track_name == "" then
     return nil
   end

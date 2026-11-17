@@ -476,18 +476,4 @@ local SIGNAL_CHAIN_LIBRARY = {
   }
 }
 
--- Export function for REAPER integration
-local function export_to_reaper()
-  -- Convert to REAPER-compatible format
-  return {
-    version = "3.0",
-    chains = SIGNAL_CHAIN_LIBRARY,
-    metadata = {
-      author = "Scott Mills Audio Systems",
-      created = os.date(),
-      compatibility = "REAPER 7.0+"
-    }
-  }
-end
-
 return SIGNAL_CHAIN_LIBRARY

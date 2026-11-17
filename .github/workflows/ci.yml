@@ -12,9 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Lua 5.4
-        run: sudo apt-get update && sudo apt-get install -y lua5.4
-      - name: Check Lua syntax
+      - name: Install Lua 5.4 and luacheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y lua5.4 luarocks
+          sudo luarocks install luacheck
+      - name: Check Lua syntax and static lint
         run: |
           fail=0
           for f in *.lua; do
@@ -23,6 +25,7 @@ jobs:
               fail=1
             fi
           done
+          luacheck *.lua tests/*.lua || fail=1
           exit $fail
 
   lua-smoke:

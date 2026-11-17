@@ -165,7 +165,7 @@ local adv_env = environment()
 load_script("phase-alignment-tool.lua", adv_env)
 local adv_api = adv_env.reaper
 local adv_detector = adv_env.SGMPhaseAlignment.findFirstTransient
-local adv_destroyed, adv_status, adv_accessor = 0, 1, {}
+local adv_destroyed, adv_accessor = 0, {}
 adv_api.GetActiveTake = function() return {} end
 adv_api.GetMediaItemTake_Source = function() return {} end
 adv_api.GetMediaSourceSampleRate = function() return 1000 end
@@ -243,10 +243,125 @@ end
 pa_env.reaper.GetMediaItemInfo_Value = function() return 1.0 end
 pa_env.reaper.SetMediaItemInfo_Value = function() end
 pa_env.gfx.showmenu = function() return 3 end -- Nudge Left 1ms
-local pa_ok, pa_err = pcall(function()
+pcall(function()
   load_script("phase-alignment-tool.lua", pa_env)
 end)
 check(pa_undo == 0 and pa_refresh == 0,
   "phase-alignment-tool multi-item nudge error must balance undo and PreventUIRefresh")
+
+-- phase-alignment-tool.lua: alignSelectedTracks() confirmation, alignment, and pcall undo/refresh balance
+local al_env = environment()
+load_script("phase-alignment-tool.lua", al_env)
+local al_api = al_env.reaper
+local al_tracks = {{name = "Gtr L"}, {name = "Gtr R"}}
+local al_items = {{pos = 1.0}, {pos = 1.0}}
+local al_undo, al_refresh = 0, 0
+al_api.CountSelectedTracks = function() return #al_tracks end
+al_api.GetSelectedTrack = function(_, idx) return al_tracks[idx + 1] end
+al_api.GetTrackName = function(tr) return true, tr.name end
+al_api.CountTrackMediaItems = function() return 1 end
+al_api.GetTrackMediaItem = function(tr, _) return tr == al_tracks[1] and al_items[1] or al_items[2] end
+al_api.GetActiveTake = function(item) return item end
+al_api.GetMediaItemTake_Source = function() return {} end
+al_api.GetMediaSourceSampleRate = function() return 1000 end
+al_api.GetMediaSourceNumChannels = function() return 1 end
+al_api.CreateTakeAudioAccessor = function(take) return take end
+al_api.DestroyAudioAccessor = function() end
+al_api.GetAudioAccessorStartTime = function() return 0.0 end
+al_api.GetAudioAccessorEndTime = function() return 0.1 end
+al_api.new_array = function(n)
+  local b = {}
+  for i = 1, n do b[i] = 0 end
+  return b
+end
+al_api.GetAudioAccessorSamples = function(acc, _, _, _, _, buf)
+  for i = 1, #buf do buf[i] = 0 end
+  if acc == al_items[1] then
+    buf[11] = 0.8 -- frame 10 -> 0.010s
+  else
+    buf[31] = 0.8 -- frame 30 -> 0.030s (needs -0.020s nudge)
+  end
+  return 1
+end
+al_api.GetMediaItemInfo_Value = function(item, _) return item.pos end
+al_api.SetMediaItemInfo_Value = function(item, _, val) item.pos = val end
+al_api.Undo_BeginBlock = function() al_undo = al_undo + 1 end
+al_api.Undo_EndBlock = function() al_undo = al_undo - 1 end
+al_api.PreventUIRefresh = function(d) al_refresh = al_refresh + d end
+al_api.UpdateArrange = function() end
+
+-- Case A: user cancels confirmation -> no mutation, no undo opened
+al_api.ShowMessageBox = function() return 0 end
+al_env.SGMPhaseAlignment.alignSelectedTracks()
+check(math.abs(al_items[2].pos - 1.0) < 1e-9 and al_undo == 0 and al_refresh == 0,
+  "declined alignSelectedTracks must not mutate items or open undo")
+
+-- Case B: user confirms -> item 2 nudged by -0.020s, balanced undo/refresh
+al_api.ShowMessageBox = function() return 1 end
+al_env.SGMPhaseAlignment.alignSelectedTracks()
+check(math.abs(al_items[2].pos - 0.98) < 1e-9 and al_undo == 0 and al_refresh == 0,
+  "confirmed alignSelectedTracks must align later item and balance undo/refresh")
+
+-- Case C: SetMediaItemInfo_Value errors inside pcall -> undo/refresh stay balanced
+al_items[2].pos = 1.0
+al_api.SetMediaItemInfo_Value = function() error("Simulated align write fault") end
+al_env.SGMPhaseAlignment.alignSelectedTracks()
+check(al_undo == 0 and al_refresh == 0,
+  "alignSelectedTracks failure inside pcall must maintain balanced Undo and PreventUIRefresh")
+
+-- SGM_Professional_Session_Builder.lua: buildProfessionalSession confirmation decline vs accept
+local bp_env = environment()
+load_script("SGM_Professional_Session_Builder.lua", bp_env)
+local bp_tracks = {}
+bp_env.reaper.CountTracks = function() return #bp_tracks end
+bp_env.reaper.InsertTrackAtIndex = function(idx) table.insert(bp_tracks, idx + 1, {name = ""}) end
+bp_env.reaper.GetTrack = function(_, idx) return bp_tracks[idx + 1] end
+bp_env.reaper.GetSetMediaTrackInfo_String = function(tr, _, val, set)
+  if set then tr.name = val end
+  return true, tr.name
+end
+bp_env.reaper.GetTrackName = function(tr) return true, tr.name end
+bp_env.reaper.ColorToNative = function() return 0 end
+bp_env.reaper.SetTrackColor = function() end
+bp_env.reaper.SetMediaTrackInfo_Value = function() end
+bp_env.reaper.CreateTrackSend = function() return 0 end
+bp_env.reaper.SetTrackSendInfo_Value = function() end
+bp_env.reaper.Undo_BeginBlock = function() end
+bp_env.reaper.Undo_EndBlock = function() end
+bp_env.reaper.PreventUIRefresh = function() end
+bp_env.reaper.TrackList_AdjustWindows = function() end
+bp_env.reaper.UpdateArrange = function() end
+bp_env.reaper.ShowMessageBox = function() return 0 end
+check(bp_env.SGMSessionBuilder.buildProfessionalSession("mixing", "no_fx") == nil and #bp_tracks == 0,
+  "declined buildProfessionalSession must not create tracks")
+bp_env.reaper.ShowMessageBox = function() return 1 end
+local bp_session = bp_env.SGMSessionBuilder.buildProfessionalSession("mixing", "no_fx")
+check(bp_session ~= nil and bp_session.implemented == true and #bp_tracks == 7,
+  "confirmed buildProfessionalSession must create 7 mixing tracks")
+
+-- reaper-template-installer.lua: main() decline vs accept in an isolated temp dir
+local inst_temp = os.tmpname()
+os.remove(inst_temp)
+os.execute("mkdir -p '" .. inst_temp:gsub("'", "'\\''") .. "'")
+local inst_env = environment()
+inst_env.reaper.GetResourcePath = function() return inst_temp end
+inst_env.reaper.ShowMessageBox = function() return 0 end
+inst_env.reaper.RecursiveCreateDirectory = function(path, _)
+  os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  return 1
+end
+load_script("./reaper-template-installer.lua", inst_env)
+check(inst_env.SGMScriptInstaller.main() == false,
+  "declined installer main() must return false")
+local manifest_before = io.open(inst_temp .. "/Scripts/ScottMills/installed-files.txt", "r")
+check(manifest_before == nil, "declined installer must not write manifest")
+if manifest_before then manifest_before:close() end
+inst_env.reaper.ShowMessageBox = function() return 1 end
+check(inst_env.SGMScriptInstaller.main() == true,
+  "confirmed installer main() must return true")
+local manifest_after = io.open(inst_temp .. "/Scripts/ScottMills/installed-files.txt", "r")
+check(manifest_after ~= nil, "confirmed installer must write installed-files.txt manifest")
+if manifest_after then manifest_after:close() end
+os.execute("rm -rf '" .. inst_temp:gsub("'", "'\\''") .. "'")
 
 print(string.format("All %d API contract checks passed", checks))

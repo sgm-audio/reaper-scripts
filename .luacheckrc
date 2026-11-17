@@ -1,29 +1,10 @@
 std = "lua54"
 
--- Global declarations
+-- Global declarations (REAPER host globals + top-level ReaScript exports)
 globals = {
   "reaper",
   "gfx",
   "ImGui",
-}
-
--- ReaPack and module exports defined at top-level
-read_globals = {
-  "reaper.*",
-  "gfx.*",
-  "ImGui.*",
-}
-
-files["tests/*.lua"] = {
-  globals = {
-    "reaper",
-    "gfx",
-    "ImGui",
-  },
-}
-
--- Allow defining top-level namespaces
-new_globals = {
   "SGMPluginInventory",
   "SGMPhaseAlignment",
   "SGMPluginWrapper",
@@ -47,8 +28,15 @@ new_globals = {
   "export_to_reaper",
 }
 
--- Do not warn on unused loop variables or self in methods
+-- Do not warn on host API fields, unused loop/arg vars, or legacy formatting
 ignore = {
+  "142", -- Setting undefined field of global (gfx.x, gfx.y)
+  "143", -- Accessing undefined field of global (reaper.*, gfx.*, ImGui.*)
   "212", -- Unused argument
   "213", -- Unused loop variable
+  "611", -- Line contains only whitespace
+  "612", -- Line contains trailing whitespace
+  "613", -- Trailing whitespace in a string
+  "614", -- Trailing whitespace in a comment
+  "631", -- Line is too long
 }
