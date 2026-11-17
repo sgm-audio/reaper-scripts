@@ -1,14 +1,10 @@
 std = "lua54"
 
--- Global declarations (REAPER injects reaper.*, gfx.*, ImGui.*)
+-- Global declarations (REAPER host globals + top-level ReaScript exports)
 globals = {
   "reaper",
   "gfx",
   "ImGui",
-}
-
--- Allow defining top-level namespaces
-new_globals = {
   "SGMPluginInventory",
   "SGMPhaseAlignment",
   "SGMPluginWrapper",
