@@ -149,6 +149,7 @@ end
 
 _G.SGMScriptInstaller = {
   copy_file = copy_file,
+  main = main,
   scripts = SCRIPTS,
   documents = DOCUMENTS,
   plugin_files = PLUGIN_FILES,

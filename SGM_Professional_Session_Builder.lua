@@ -287,5 +287,6 @@ _G.SGMSessionBuilder = {
   AdvancedSessionBuilder = AdvancedSessionBuilder,
   SessionImplementationEngine = SessionImplementationEngine,
   session_builders = SESSION_BUILDERS,
+  buildProfessionalSession = buildProfessionalSession,
 }
 showProfessionalBuilderMenu()

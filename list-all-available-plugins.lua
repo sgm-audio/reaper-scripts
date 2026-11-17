@@ -131,6 +131,7 @@ function PluginScanner:scanFXBrowser()
 
   local caches = {
     {"reaper-vstplugins64.ini", "vst"},
+    {"reaper-vstplugins_arm64.ini", "vst"},
     {"reaper-vstplugins-arm64.ini", "vst"},
     {"reaper-vstplugins.ini", "vst"},
     {"reaper-clap-plugins64.ini", "clap"},
@@ -139,12 +140,26 @@ function PluginScanner:scanFXBrowser()
     {"reaper-clap-linux-aarch64.ini", "clap"},
     {"reaper-clap-plugins.ini", "clap"},
     {"reaper-auplugins64.ini", "au"},
-    {"reaper-au-plugins64.ini", "au"},
-    {"reaper-au-plugins.ini", "au"},
+    {"reaper-auplugins_arm64.ini", "au"},
+    {"reaper-auplugins.ini", "au"},
     {"reaper-lv2plugins64.ini", "lv2"},
-    {"reaper-lv2-plugins64.ini", "lv2"},
-    {"reaper-lv2-plugins.ini", "lv2"},
+    {"reaper-lv2plugins.ini", "lv2"},
   }
+  local seen_cache_files = {}
+  for _, cache in ipairs(caches) do
+    seen_cache_files[cache[1]:lower()] = true
+  end
+  local file_idx = 0
+  while true do
+    local filename = reaper.EnumerateFiles(resource_path, file_idx)
+    if not filename then break end
+    local lower = filename:lower()
+    if lower:match("^reaper%-clap%-.*%.ini$") and not seen_cache_files[lower] then
+      seen_cache_files[lower] = true
+      table.insert(caches, {filename, "clap"})
+    end
+    file_idx = file_idx + 1
+  end
   local seen = {}
   for _, cache in ipairs(caches) do
     for _, plugin in ipairs(self:parseCache(path_join(resource_path, cache[1]), cache[2])) do

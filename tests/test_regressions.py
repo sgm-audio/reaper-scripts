@@ -429,6 +429,27 @@ class PluginAndCacheRegressions(unittest.TestCase):
             self.assertIn("already contains 3 track(s)", mb_calls[0][0])
             self.assertEqual(len(project_built), 0)
 
+    def test_get_composition_awkward_accepts_and_cancels_cleanly(self):
+        import reaper_ai_integration as rai
+
+        prompts = []
+
+        def fake_mb_decline(msg, _title, _flags):
+            prompts.append(msg)
+            return 7  # IDNO
+
+        with patch.dict(rai.__dict__, {"RPR_MB": fake_mb_decline}):
+            res = rai.UserInteraction.get_composition_awkward(["Comp A", "Comp B"])
+        self.assertIsNone(res)
+        self.assertEqual(len(prompts), 2)
+
+        def fake_mb_accept_second(msg, _title, _flags):
+            return 6 if "Comp B" in msg else 7
+
+        with patch.dict(rai.__dict__, {"RPR_MB": fake_mb_accept_second}):
+            res = rai.UserInteraction.get_composition_awkward(["Comp A", "Comp B"])
+        self.assertEqual(res, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
