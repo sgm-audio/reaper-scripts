@@ -274,9 +274,9 @@ al_api.new_array = function(n)
   for i = 1, n do b[i] = 0 end
   return b
 end
-al_api.GetAudioAccessorSamples = function(accessor, _, _, _, _, buf)
+al_api.GetAudioAccessorSamples = function(acc, _, _, _, _, buf)
   for i = 1, #buf do buf[i] = 0 end
-  if accessor == al_items[1] then
+  if acc == al_items[1] then
     buf[11] = 0.8 -- frame 10 -> 0.010s
   else
     buf[31] = 0.8 -- frame 30 -> 0.030s (needs -0.020s nudge)

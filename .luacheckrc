@@ -1,25 +1,10 @@
 std = "lua54"
 
--- Global declarations
+-- Global declarations (REAPER injects reaper.*, gfx.*, ImGui.*)
 globals = {
-  "reaper",
-  "gfx",
-  "ImGui",
-}
-
--- ReaPack and module exports defined at top-level
-read_globals = {
-  "reaper.*",
-  "gfx.*",
-  "ImGui.*",
-}
-
-files["tests/*.lua"] = {
-  globals = {
-    "reaper",
-    "gfx",
-    "ImGui",
-  },
+  reaper = { other_fields = true, read_only = false },
+  gfx = { other_fields = true, read_only = false },
+  ImGui = { other_fields = true, read_only = false },
 }
 
 -- Allow defining top-level namespaces
@@ -47,8 +32,13 @@ new_globals = {
   "export_to_reaper",
 }
 
--- Do not warn on unused loop variables or self in methods
+-- Do not warn on unused loop variables, self, or legacy formatting
 ignore = {
   "212", -- Unused argument
   "213", -- Unused loop variable
+  "611", -- Line contains only whitespace
+  "612", -- Line contains trailing whitespace
+  "613", -- Trailing whitespace in a string
+  "614", -- Trailing whitespace in a comment
+  "631", -- Line is too long
 }
