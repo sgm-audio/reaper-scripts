@@ -165,7 +165,7 @@ local adv_env = environment()
 load_script("phase-alignment-tool.lua", adv_env)
 local adv_api = adv_env.reaper
 local adv_detector = adv_env.SGMPhaseAlignment.findFirstTransient
-local adv_destroyed, adv_status, adv_accessor = 0, 1, {}
+local adv_destroyed, adv_accessor = 0, {}
 adv_api.GetActiveTake = function() return {} end
 adv_api.GetMediaItemTake_Source = function() return {} end
 adv_api.GetMediaSourceSampleRate = function() return 1000 end
