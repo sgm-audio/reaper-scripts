@@ -477,7 +477,7 @@ local SIGNAL_CHAIN_LIBRARY = {
 }
 
 -- Export function for REAPER integration
-function export_to_reaper()
+local function export_to_reaper()
   -- Convert to REAPER-compatible format
   return {
     version = "3.0",

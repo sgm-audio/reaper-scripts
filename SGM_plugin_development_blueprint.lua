@@ -45,7 +45,7 @@ local function file_exists(path)
   return false
 end
 
-function show_plugin_development_guide()
+local function show_plugin_development_guide()
   message("=== SGM BUILDABLE JUCE PLUGIN BASELINE ===")
   message("Builds: VST3, Standalone, and native processing tests")
   message("Requires: CMake 3.22+, a C++17 compiler, and JUCE 8.0.4")
@@ -54,8 +54,8 @@ function show_plugin_development_guide()
   message("After generation, follow README.md in the destination directory.")
 end
 
-function create_development_project()
-  local parent_path = reaper.GetProjectPath(0)
+local function create_development_project()
+  local parent_path = reaper.GetProjectPath()
   if parent_path == nil or parent_path == "" then
     reaper.ShowMessageBox(
       "Save the REAPER project before generating the JUCE project.",
@@ -125,7 +125,7 @@ function create_development_project()
   return true
 end
 
-function main()
+local function main()
   show_plugin_development_guide()
   local answer = reaper.ShowMessageBox(
     "Create the buildable SGM Utility JUCE project in the current project folder?\n\n" ..

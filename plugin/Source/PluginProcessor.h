@@ -39,6 +39,8 @@ private:
     template <typename SampleType>
     void process(juce::AudioBuffer<SampleType>& buffer);
 
+    std::atomic<float>* gainParam = nullptr;
+    std::atomic<float>* bypassParam = nullptr;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gain;
     juce::SmoothedValue<double, juce::ValueSmoothingTypes::Linear> doubleGain;
 

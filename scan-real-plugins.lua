@@ -31,14 +31,17 @@ local function get_scan_paths()
   local function add(path) if path and path ~= "" then table.insert(paths, path) end end
   local os_type = reaper.GetOS()
   if os_type == "Win32" or os_type == "Win64" then
-    add("C:/Program Files/VSTPlugins")
-    add("C:/Program Files (x86)/VSTPlugins")
-    add("C:/Program Files/Steinberg/VSTPlugins")
-    add("C:/Program Files (x86)/Steinberg/VSTPlugins")
-    add("C:/Program Files/Common Files/VST3")
-    add("C:/Program Files/Common Files/CLAP")
-    add("C:/Program Files (x86)/Waves/Plug-Ins V16")
-    add("C:/Program Files/Waves/Plug-Ins V16")
+    local pf = os.getenv("ProgramFiles") or "C:/Program Files"
+    local pf86 = os.getenv("ProgramFiles(x86)") or "C:/Program Files (x86)"
+    local cf = os.getenv("CommonProgramFiles") or (pf .. "/Common Files")
+    add(join_path(pf, "VSTPlugins"))
+    add(join_path(pf86, "VSTPlugins"))
+    add(join_path(pf, "Steinberg/VSTPlugins"))
+    add(join_path(pf86, "Steinberg/VSTPlugins"))
+    add(join_path(cf, "VST3"))
+    add(join_path(cf, "CLAP"))
+    add(join_path(pf86, "Waves/Plug-Ins V16"))
+    add(join_path(pf, "Waves/Plug-Ins V16"))
     local localappdata = os.getenv("LOCALAPPDATA")
     if localappdata then add(join_path(localappdata, "Programs/Common/VST3")) end
   elseif os_type:match("^OSX") then
@@ -63,7 +66,9 @@ local function get_scan_paths()
   return paths
 end
 
-local function scanDirectory(path)
+local function scanDirectory(path, depth)
+  depth = depth or 0
+  if depth > 16 then return {} end
   local plugins = {}
   local index = 0
   while true do
@@ -95,7 +100,7 @@ local function scanDirectory(path)
         type = plugin_format,
       })
     else
-      for _, plugin in ipairs(scanDirectory(full_path)) do table.insert(plugins, plugin) end
+      for _, plugin in ipairs(scanDirectory(full_path, depth + 1)) do table.insert(plugins, plugin) end
     end
     index = index + 1
   end

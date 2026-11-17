@@ -29,6 +29,12 @@ end
 
 write_file(temp_root .. "/reaper-vstplugins64.ini",
   '[vstcache]\nDelay.vst3=ABC,1,"Delay, Wide (Vendor)"\nEQ.dll=DEF,1,"Equalizer"\n')
+write_file(temp_root .. "/reaper-auplugins64.ini",
+  '[aucache]\nAUComp.component=AU1,1,"AU Comp"\n')
+write_file(temp_root .. "/reaper-lv2plugins64.ini",
+  '[lv2cache]\nLV2Eq.lv2=LV1,1,"LV2 EQ"\n')
+write_file(temp_root .. "/reaper-clap-linux-x86_64.ini",
+  '[clapcache]\nSynth.clap=CL1,1,"CLAP Synth"\n')
 write_file(temp_root .. "/Effects/utility", "desc:Utility")
 write_file(temp_root .. "/Effects/include.jsfx-inc", "// include")
 
@@ -37,6 +43,7 @@ local sends_created = 0
 local last_parallel_volume = nil
 local parallel_send_pending = false
 local file_lists = {
+  [temp_root] = {"reaper-vstplugins64.ini", "reaper-auplugins64.ini", "reaper-lv2plugins64.ini", "reaper-clap-linux-x86_64.ini"},
   [temp_root .. "/Effects"] = {"utility", "include.jsfx-inc"},
   ["/test"] = {"Legacy.DLL"},
 }
@@ -128,6 +135,9 @@ local Inventory = _G.SGMPluginInventory
 check(Inventory ~= nil, "inventory module was not exported")
 local inventory_json = read_file(temp_root .. "/plugin_inventory.json")
 check(inventory_json:find("Delay, Wide (Vendor)", 1, true) ~= nil, "cache parser lost quoted comma name")
+check(inventory_json:find("AU Comp", 1, true) ~= nil, "AU cache was not inventoried")
+check(inventory_json:find("LV2 EQ", 1, true) ~= nil, "LV2 cache was not inventoried")
+check(inventory_json:find("CLAP Synth", 1, true) ~= nil, "CLAP cache was not inventoried")
 check(inventory_json:find('"utility"', 1, true) ~= nil, "extensionless JSFX was not inventoried")
 check(inventory_json:find("include.jsfx-inc", 1, true) == nil, "JSFX include was listed as a plugin")
 local scanner = Inventory:new()

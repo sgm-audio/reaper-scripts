@@ -241,7 +241,7 @@ local function generateSessionReport(session, fx_warnings)
   msg("Existing tracks and items were preserved.")
 end
 
-function buildProfessionalSession(project_type, complexity)
+local function buildProfessionalSession(project_type, complexity)
   local builder = AdvancedSessionBuilder:new()
   local session, build_error = builder:buildSessionFromAnalysis(project_type, complexity)
   if not session then

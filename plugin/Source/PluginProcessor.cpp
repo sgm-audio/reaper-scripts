@@ -31,7 +31,9 @@ SGMUtilityAudioProcessor::SGMUtilityAudioProcessor()
     : AudioProcessor(BusesProperties()
           .withInput("Input", juce::AudioChannelSet::stereo(), true)
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      parameters(*this, nullptr, "PARAMETERS", createParameterLayout())
+      parameters(*this, nullptr, "PARAMETERS", createParameterLayout()),
+      gainParam(parameters.getRawParameterValue("gain")),
+      bypassParam(parameters.getRawParameterValue("bypass"))
 {
     gain.setCurrentAndTargetValue(1.0f);
     doubleGain.setCurrentAndTargetValue(1.0);
@@ -39,9 +41,12 @@ SGMUtilityAudioProcessor::SGMUtilityAudioProcessor()
 
 void SGMUtilityAudioProcessor::prepareToPlay(double sampleRate, int)
 {
-    gain.reset(sampleRate, 0.020);
-    doubleGain.reset(sampleRate, 0.020);
-    const auto decibels = normalizeUnityGain(parameters.getRawParameterValue("gain")->load());
+    if (sampleRate > 0.0)
+    {
+        gain.reset(sampleRate, 0.020);
+        doubleGain.reset(sampleRate, 0.020);
+    }
+    const auto decibels = normalizeUnityGain(gainParam->load());
     const auto linear = juce::Decibels::decibelsToGain<double>(decibels, -60.0);
     gain.setCurrentAndTargetValue(static_cast<float>(linear));
     doubleGain.setCurrentAndTargetValue(linear);
@@ -67,11 +72,18 @@ void SGMUtilityAudioProcessor::process(juce::AudioBuffer<SampleType>& buffer)
     for (auto channel = getTotalNumInputChannels(); channel < getTotalNumOutputChannels(); ++channel)
         buffer.clear(channel, 0, buffer.getNumSamples());
 
-    if (parameters.getRawParameterValue("bypass")->load() >= 0.5f)
-        return;
-
-    const auto decibels = normalizeUnityGain(parameters.getRawParameterValue("gain")->load());
+    const auto decibels = normalizeUnityGain(gainParam->load());
     const auto linear = juce::Decibels::decibelsToGain<double>(decibels, -60.0);
+
+    if (bypassParam->load() >= 0.5f)
+    {
+        if constexpr (std::is_same<SampleType, float>::value)
+            gain.setCurrentAndTargetValue(static_cast<float>(linear));
+        else
+            doubleGain.setCurrentAndTargetValue(linear);
+        return;
+    }
+
     if constexpr (std::is_same<SampleType, float>::value)
     {
         gain.setTargetValue(static_cast<float>(linear));
