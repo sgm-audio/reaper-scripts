@@ -13,7 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Lua 5.4 and luacheck
-        run: sudo apt-get update && sudo apt-get install -y lua5.4 luacheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y lua5.4 luarocks
+          sudo luarocks install luacheck
       - name: Check Lua syntax and static lint
         run: |
           fail=0

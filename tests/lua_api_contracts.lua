@@ -350,7 +350,7 @@ inst_env.reaper.RecursiveCreateDirectory = function(path, _)
   os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
   return 1
 end
-load_script("reaper-template-installer.lua", inst_env)
+load_script("./reaper-template-installer.lua", inst_env)
 check(inst_env.SGMScriptInstaller.main() == false,
   "declined installer main() must return false")
 local manifest_before = io.open(inst_temp .. "/Scripts/ScottMills/installed-files.txt", "r")
