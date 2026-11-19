@@ -4,7 +4,15 @@
 
 local temp_root = os.tmpname()
 os.remove(temp_root)
-os.execute("mkdir -p '" .. temp_root:gsub("'", "'\\''") .. "'")
+local is_win = package.config:sub(1, 1) == "\\"
+local function make_dir(path)
+  if is_win then
+    os.execute('mkdir "' .. tostring(path):gsub("/", "\\") .. '"')
+  else
+    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  end
+end
+make_dir(temp_root)
 
 reaper = {
   GetResourcePath = function() return temp_root end,
@@ -36,7 +44,7 @@ reaper = {
     return false
   end,
   RecursiveCreateDirectory = function(path, _)
-    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+    make_dir(path)
     return 1
   end,
   Undo_BeginBlock = function() end,
@@ -133,5 +141,9 @@ for _, filename in ipairs(arg) do
   end
 end
 
-os.execute("rm -rf '" .. temp_root:gsub("'", "'\\''") .. "'")
+if is_win then
+  os.execute('rmdir /s /q "' .. temp_root:gsub("/", "\\") .. '"')
+else
+  os.execute("rm -rf '" .. temp_root:gsub("'", "'\\''") .. "'")
+end
 os.exit(fail)

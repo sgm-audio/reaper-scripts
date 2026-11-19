@@ -358,12 +358,20 @@ check(bp_session ~= nil and bp_session.implemented == true and #bp_tracks == 7,
 -- reaper-template-installer.lua: main() decline vs accept in an isolated temp dir
 local inst_temp = os.tmpname()
 os.remove(inst_temp)
-os.execute("mkdir -p '" .. inst_temp:gsub("'", "'\\''") .. "'")
+local is_win = package.config:sub(1, 1) == "\\"
+local function make_dir(path)
+  if is_win then
+    os.execute('mkdir "' .. tostring(path):gsub("/", "\\") .. '"')
+  else
+    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  end
+end
+make_dir(inst_temp)
 local inst_env = environment()
 inst_env.reaper.GetResourcePath = function() return inst_temp end
 inst_env.reaper.ShowMessageBox = function() return 0 end
 inst_env.reaper.RecursiveCreateDirectory = function(path, _)
-  os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  make_dir(path)
   return 1
 end
 load_script("./reaper-template-installer.lua", inst_env)
@@ -378,6 +386,10 @@ check(inst_env.SGMScriptInstaller.main() == true,
 local manifest_after = io.open(inst_temp .. "/Scripts/ScottMills/installed-files.txt", "r")
 check(manifest_after ~= nil, "confirmed installer must write installed-files.txt manifest")
 if manifest_after then manifest_after:close() end
-os.execute("rm -rf '" .. inst_temp:gsub("'", "'\\''") .. "'")
+if is_win then
+  os.execute('rmdir /s /q "' .. inst_temp:gsub("/", "\\") .. '"')
+else
+  os.execute("rm -rf '" .. inst_temp:gsub("'", "'\\''") .. "'")
+end
 
 print(string.format("All %d API contract checks passed", checks))
