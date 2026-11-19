@@ -331,11 +331,6 @@ class AAFInterface:
             stream.close()
 
         meta = mob.descriptor
-        data_fmt = ""
-        try:
-            data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
-        except Exception:
-            data_fmt = ""
         is_container = bytes(data[:4]) in (b"RIFF", b"RF64", b"FORM")
         if not is_container and "QuantizationBits" in meta:
             # Raw PCM essence (PCMDescriptor) has no header: wrap it in a WAV using the

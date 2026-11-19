@@ -113,6 +113,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
       - uses: leafo/gh-actions-lua@v10
         with:
           luaVersion: "5.4"
