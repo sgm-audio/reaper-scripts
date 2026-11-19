@@ -54,6 +54,43 @@ local function normalized(path)
   return value
 end
 
+-- destination path -> previous content (string) or false if it did not exist.
+local backups, backup_order = {}, {}
+
+local function remember_original(path)
+  if backups[path] ~= nil then return end
+  local existing = io.open(path, "rb")
+  if existing then
+    backups[path] = existing:read("*a") or false
+    existing:close()
+    if backups[path] == false then backups[path] = "" end
+  else
+    backups[path] = false
+  end
+  table.insert(backup_order, path)
+end
+
+local function rollback_install()
+  local problems = {}
+  for i = #backup_order, 1, -1 do
+    local path = backup_order[i]
+    local previous = backups[path]
+    if previous == false then
+      os.remove(path)
+    else
+      local file = io.open(path, "wb")
+      if file then
+        local ok = file:write(previous)
+        file:close()
+        if not ok then table.insert(problems, path) end
+      else
+        table.insert(problems, path)
+      end
+    end
+  end
+  return problems
+end
+
 local function copy_file(source_dir, filename, destination_dir)
   local source_path = source_dir .. filename
   local destination_path = destination_dir .. filename
@@ -67,6 +104,7 @@ local function copy_file(source_dir, filename, destination_dir)
   source:close()
   if content == nil then return false, "could not read source file" end
 
+  remember_original(destination_path)
   local destination, destination_error = io.open(destination_path, "wb")
   if not destination then return false, destination_error end
   local ok, write_error = destination:write(content)
@@ -95,6 +133,7 @@ end
 
 local function write_manifest(copied)
   local manifest_path = install_path .. "installed-files.txt"
+  remember_original(manifest_path)
   local file, open_error = io.open(manifest_path, "w")
   if not file then return false, open_error end
   local lines = {
@@ -110,6 +149,7 @@ local function write_manifest(copied)
 end
 
 local function main()
+  backups, backup_order = {}, {}
   msg("=== SGM REAPER SCRIPT SUITE INSTALLER v" .. script_version .. " ===")
   if script_dir == "" then
     reaper.ShowMessageBox("Could not determine the installer's source directory.", "Installation Failed", 0)
@@ -136,10 +176,15 @@ local function main()
   end
 
   if #failures > 0 then
+    local rollback_problems = rollback_install()
+    local note = "\n\nAll changes were rolled back; previous files were restored."
+    if #rollback_problems > 0 then
+      note = "\n\nRollback could not restore:\n" .. table.concat(rollback_problems, "\n")
+    end
     reaper.ShowMessageBox(
       #failures .. " file(s) could not be installed:\n\n" .. table.concat(failures, "\n") ..
-      "\n\nSee the REAPER console for details.",
-      "Installation — Partial Failure", 0)
+      note .. "\n\nSee the REAPER console for details.",
+      "Installation Failed", 0)
     return false
   end
 

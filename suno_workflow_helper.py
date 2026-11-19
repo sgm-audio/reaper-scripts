@@ -7,6 +7,7 @@ import logging.config
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -306,6 +307,20 @@ class SunoReaperWorkflow:
                     return audio.getnframes() / audio.getframerate()
         except (wave.Error, EOFError, OSError):
             pass
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                completed = subprocess.run(
+                    [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", path],
+                    capture_output=True, text=True, timeout=30, check=False,
+                )
+                if completed.returncode == 0:
+                    value = float(completed.stdout.strip())
+                    if 0 < value < float("inf"):
+                        return value
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
         return 0.0
 
     def _create_basic_project(

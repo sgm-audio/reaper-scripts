@@ -503,6 +503,9 @@ function PluginAutomation:new(plugin_instance)
   return obj
 end
 
+-- NOTE: automateParameter/createSweep mutate envelopes but do NOT open an undo
+-- block; callers must wrap them in Undo_BeginBlock/Undo_EndBlock (see
+-- automateSelectedPlugin) so the edit is a single balanced undo step.
 function PluginAutomation:automateParameter(param_index, start_value, end_value, duration_beats)
   local track = self.plugin.track
   local param_env = reaper.GetFXEnvelope(track, self.plugin.fx_index, param_index, true)
