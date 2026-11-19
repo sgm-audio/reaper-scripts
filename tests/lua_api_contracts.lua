@@ -45,7 +45,7 @@ api.DestroyAudioAccessor = function() destroyed = destroyed + 1 end
 for _, count in ipairs({1, 2, 4}) do
   channels = count
   local time, peak = detector({})
-  check(time and math.abs(time - 12.04) < 1e-9, "status 1 must scan all requested frames/channels")
+  check(time and math.abs(time - 12.065) < 1e-9, "status 1 must include accessor_start and scan all requested frames/channels")
   check(peak == 0.8, "negative transient amplitude must be absolute")
 end
 check(read_start == 0.025 and requested == 100, "read must start at accessor boundary")
@@ -114,6 +114,14 @@ pw_env.reaper.Envelope_SortPoints = function() end
 pw_env.reaper.GetLastTouchedFX = function() return true, 1, 0x1000000, 0 end
 check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == false and pw_points == 0,
   "record-input FX bitmask must be rejected")
+pw_env.reaper.GetLastTouchedFX = function() return true, (1 << 16) | 1, 0, 0 end
+check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == false and pw_points == 0,
+  "take FX track_number bitmask ((1 << 16) | 1) must be rejected")
+pw_env.reaper.GetLastTouchedFX = function() return true, 1, 0x2000000 | 1, 0 end
+pw_env.reaper.ShowMessageBox = function() return 1 end
+check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == true and pw_undo == 0 and pw_refresh == 0 and pw_points == 21,
+  "REAPER 7 FX container bitmask (0x2000000) must be allowed for track FX automation")
+pw_points = 0
 pw_env.reaper.GetLastTouchedFX = function() return true, 1, 0, 0 end
 pw_env.reaper.ShowMessageBox = function() return 0 end
 check(pw_env.SGMPluginWrapper.automateSelectedPlugin() == false and pw_undo == 0 and pw_points == 0,
@@ -190,7 +198,7 @@ local s_time, s_peak = adv_detector({})
 check(s_time == nil and s_peak == 0, "digital silence must return nil transient and 0 peak")
 check(adv_destroyed == 1, "silence read must destroy accessor")
 
--- Case 2: Constant DC offset below threshold (0.05, threshold is 0.1) -> must return nil and peak 0.05
+-- Case 2: Constant DC offset below threshold (0.05, threshold is 0.3) -> must return nil and peak 0.05
 adv_api.GetAudioAccessorSamples = function(_, rate, count, start, frames, buffer)
   for i = 1, #buffer do buffer[i] = 0.05 end
   return 1
@@ -302,7 +310,15 @@ al_env.SGMPhaseAlignment.alignSelectedTracks()
 check(math.abs(al_items[2].pos - 0.98) < 1e-9 and al_undo == 0 and al_refresh == 0,
   "confirmed alignSelectedTracks must align later item and balance undo/refresh")
 
--- Case C: SetMediaItemInfo_Value errors inside pcall -> undo/refresh stay balanced
+-- Case C: items start at 0.0s -> shifting left would clamp, so align right to latest transient instead
+al_items[1].pos = 0.0
+al_items[2].pos = 0.0
+al_env.SGMPhaseAlignment.alignSelectedTracks()
+check(math.abs(al_items[1].pos - 0.02) < 1e-9 and math.abs(al_items[2].pos - 0.0) < 1e-9,
+  "items at 0.0s must align right to latest transient without clamping")
+
+-- Case D: SetMediaItemInfo_Value errors inside pcall -> undo/refresh stay balanced
+al_items[1].pos = 1.0
 al_items[2].pos = 1.0
 al_api.SetMediaItemInfo_Value = function() error("Simulated align write fault") end
 al_env.SGMPhaseAlignment.alignSelectedTracks()

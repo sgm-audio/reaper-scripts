@@ -18,10 +18,11 @@ def main(argv=None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     args = parser.parse_args(argv)
 
-    if not Path(args.input_file).is_file():
+    input_path = Path(args.input_file).expanduser()
+    if not input_path.is_file():
         parser.exit(2, f"error: audio file not found: {args.input_file}\n")
     orchestrator = SEMASOrchestrator()
-    job = SEMASJob(input_file=args.input_file, operations=args.operations)
+    job = SEMASJob(input_file=str(input_path), operations=args.operations)
     orchestrator.submit_job(job)
     orchestrator.process_job(job.id)
     payload = json.dumps(job.to_dict(), indent=2)

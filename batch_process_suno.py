@@ -1,11 +1,13 @@
 """Batch audio discovery and Suno-to-REAPER project processing."""
 
 import argparse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import re
 import time
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional, Tuple
 
 from suno_workflow_config_system import PathConfig, WorkflowConfig
 from suno_workflow_helper import SunoReaperWorkflow
@@ -47,12 +49,76 @@ class BatchProcessor:
             if path.is_file() and path.suffix.lower() in normalized
         ]
 
-    def process_file(self, input_file: str) -> dict:
+    @staticmethod
+    def _sanitize_segment(text: str) -> str:
+        cleaned = re.sub(r'[\\/:*?"<>|\s]+', "_", text).strip("._")
+        return cleaned or "track"
+
+    def _assign_project_names(
+        self, files: List[str]
+    ) -> List[Tuple[str, Optional[str]]]:
+        if not self.output_dir or len(files) <= 1:
+            return [(path, None) for path in files]
+
+        stem_counts = Counter(Path(path).stem.lower() for path in files)
+        if all(count == 1 for count in stem_counts.values()):
+            return [(path, None) for path in files]
+
+        resolved_parents = [str(Path(path).expanduser().resolve().parent) for path in files]
+        try:
+            common_root = Path(os.path.commonpath(resolved_parents))
+        except ValueError:
+            common_root = None
+
+        used_names = set()
+        assignments: List[Tuple[str, Optional[str]]] = []
+        for path in files:
+            file_path = Path(path).expanduser().resolve()
+            stem = file_path.stem
+            if stem_counts[stem.lower()] == 1:
+                assignments.append((path, None))
+                used_names.add(f"{stem.lower()}_reaper_project")
+                continue
+
+            prefix_parts = []
+            if common_root is not None:
+                try:
+                    rel_parent = file_path.parent.relative_to(common_root)
+                    prefix_parts = [
+                        self._sanitize_segment(part)
+                        for part in rel_parent.parts
+                        if part not in ("", ".")
+                    ]
+                except ValueError:
+                    prefix_parts = [self._sanitize_segment(file_path.parent.name)]
+            else:
+                prefix_parts = [self._sanitize_segment(file_path.parent.name)]
+
+            safe_stem = self._sanitize_segment(stem)
+            base_label = "_".join(prefix_parts + [safe_stem]) if prefix_parts else safe_stem
+            candidate = f"{base_label}_reaper_project"
+            suffix = 2
+            while candidate.lower() in used_names:
+                candidate = f"{base_label}_{suffix}_reaper_project"
+                suffix += 1
+            used_names.add(candidate.lower())
+            assignments.append((path, candidate))
+
+        return assignments
+
+    def process_file(
+        self, input_file: str, project_name: Optional[str] = None
+    ) -> dict:
         started = time.monotonic()
         config = WorkflowConfig(paths=PathConfig(output_dir=self.output_dir))
         try:
             workflow = self.workflow_factory(config=config)
-            result = workflow.process_suno_track(input_file)
+            if project_name is not None:
+                result = workflow.process_suno_track(
+                    input_file, project_name=project_name
+                )
+            else:
+                result = workflow.process_suno_track(input_file)
             return {
                 "success": result.success,
                 "input_file": os.fspath(input_file),
@@ -75,10 +141,19 @@ class BatchProcessor:
 
     def process_files(self, audio_files: Iterable[str]) -> List[dict]:
         files = list(audio_files)
-        if self.parallel and files:
+        assignments = self._assign_project_names(files)
+        if self.parallel and assignments:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                return list(executor.map(self.process_file, files))
-        return [self.process_file(path) for path in files]
+                return list(
+                    executor.map(
+                        lambda pair: self.process_file(pair[0], pair[1]),
+                        assignments,
+                    )
+                )
+        return [
+            self.process_file(path, project_name)
+            for path, project_name in assignments
+        ]
 
     def process_directory(
         self,
@@ -146,7 +221,10 @@ def main(argv=None) -> int:
         parser.exit(2, f"error: {exc}\n")
 
     if args.report:
-        processor.generate_batch_report(results, args.report)
+        try:
+            processor.generate_batch_report(results, args.report)
+        except OSError as exc:
+            parser.exit(2, f"error: failed to write batch report: {exc}\n")
     failures = sum(not result["success"] for result in results)
     print(f"Processed {len(results)} files: {len(results) - failures} succeeded, {failures} failed")
     for result in results:

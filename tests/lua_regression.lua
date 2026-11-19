@@ -153,28 +153,98 @@ local escaped = read_file(escaped_path)
 check(escaped:find('\\"', 1, true) ~= nil, "quotes were not JSON escaped")
 check(escaped:find('\\n', 1, true) ~= nil, "newlines were not JSON escaped")
 
--- PluginDB must round-trip its complete flat schema without data loss.
+-- PluginDB must round-trip its complete flat schema without data loss, including \uXXXX escapes.
 assert(loadfile("plugin-wrapper.lua"))()
 local db = _G.SGMPluginWrapper.PluginDB:new()
 db.last_scan = 12345
-db:addPlugin({name = 'A "quoted" \\ EQ', path = "C:\\\\Plugins\\A.vst3", format = "VST3",
+db:addPlugin({name = 'A "quoted" \\ EQ\007\\u0007', path = "C:\\\\Plugins\\A.vst3", format = "VST3",
   vendor = "Vendor", category = "EQ", param_count = 7})
 local decoded = db:parseJSON(db:toJSON())
 check(decoded and #decoded.plugins == 1, "plugin database did not round-trip")
 check(decoded and decoded.last_scan == 12345, "plugin database timestamp changed")
-check(decoded and decoded.plugins[1].name == db.plugins[1].name, "plugin name escaping broke round-trip")
+check(decoded and decoded.plugins[1].name == db.plugins[1].name, "plugin name escaping (including \\uXXXX) broke round-trip")
 check(decoded and decoded.plugins[1].path == db.plugins[1].path, "plugin path escaping broke round-trip")
 check(decoded and decoded.plugins[1].param_count == 7, "plugin parameter count was lost")
 
--- Filesystem bundles use portable paths and are not recursively unpacked.
+-- plugin-wrapper.lua: macOS-arm64 paths, Linux .so, macOS .clap bundles, and multi-dot filenames.
+local prev_get_os = reaper.GetOS
+reaper.GetOS = function() return "macOS-arm64" end
+local arm_paths = _G.SGMPluginWrapper.getScanPaths()
+local has_mac_path = false
+for _, p in ipairs(arm_paths) do
+  if p == "/Library/Audio/Plug-Ins/VST3" then has_mac_path = true end
+end
+check(has_mac_path, "plugin-wrapper did not recognize macOS-arm64")
+reaper.GetOS = prev_get_os
+
+local pw_scanner = _G.SGMPluginWrapper.PluginScanner:new()
+local multi_dot = pw_scanner:analyzePlugin("/usr/lib/vst3/FabFilter Pro-Q 3.5.vst3")
+check(multi_dot and multi_dot.name == "FabFilter Pro-Q 3.5" and multi_dot.format == "VST3",
+  "plugin-wrapper truncated multi-dot plugin name: " .. tostring(multi_dot and multi_dot.name))
+local linux_so = pw_scanner:analyzePlugin("/usr/lib/lxvst/DragonflyRoomReverb.so")
+check(linux_so and linux_so.name == "DragonflyRoomReverb" and linux_so.format == "VST2",
+  "plugin-wrapper did not classify Linux .so as VST2")
+file_lists["/test-pw"] = {"LinuxPlug.so"}
+directory_lists["/test-pw"] = {"MacSynth.clap"}
+local pw_files = pw_scanner:getFilesInDirectory("/test-pw")
+check(#pw_files == 2, "plugin-wrapper missed Linux .so or macOS .clap bundle")
+
+-- Filesystem bundles use portable paths and are not recursively unpacked, including .so and .clap.
+file_lists["/test"] = {"Legacy.DLL", "LinuxVST.so"}
+directory_lists["/test"] = {"Bundle.vst3", "Bundle.clap"}
 assert(loadfile("scan-real-plugins.lua"))()
 local found = _G.SGMRealPluginScanner.scanDirectory("/test")
-check(#found == 2, "filesystem scanner missed a file or VST3 bundle")
+check(#found == 4, "filesystem scanner missed .dll, .so, .vst3, or .clap bundle (got " .. #found .. ")")
+local found_by_name = {}
+for _, plugin in ipairs(found) do found_by_name[plugin.name] = plugin.type end
+check(found_by_name["LinuxVST"] == "vst2", "scan-real-plugins did not classify .so as vst2")
+check(found_by_name["Bundle"] ~= nil, "scan-real-plugins missed bundle entries")
 local portable = true
 for _, plugin in ipairs(found) do
   if plugin.path:find("\\", 1, true) then portable = false end
 end
 check(portable, "filesystem scanner produced Windows paths on Linux")
+reaper.GetOS = function() return "macOS-arm64" end
+local scan_arm_paths = _G.SGMRealPluginScanner.get_scan_paths()
+local scan_has_mac = false
+for _, p in ipairs(scan_arm_paths) do
+  if p == "/Library/Audio/Plug-Ins/CLAP" then scan_has_mac = true end
+end
+check(scan_has_mac, "scan-real-plugins did not recognize macOS-arm64")
+reaper.GetOS = prev_get_os
+
+-- list-all-available-plugins.lua: real AU & CLAP schemas + multi-plugin shell dedup.
+write_file(temp_root .. "/real-au.ini", "Apple: AUBandpass=<1234>\nDisabled: BadPlug=<!0>\n")
+local real_au = scanner:parseCache(temp_root .. "/real-au.ini", "au")
+check(#real_au == 1 and real_au[1].name == "Apple: AUBandpass" and real_au[1].type == "au",
+  "AU real schema parsing failed")
+write_file(temp_root .. "/real-clap.ini", "[Surge.clap]\nmtime=12345\norg.surge.xt=Surge XT\norg.surge.fx=Surge XT FX\n")
+local real_clap = scanner:parseCache(temp_root .. "/real-clap.ini", "clap")
+check(#real_clap == 2 and real_clap[1].uid == "org.surge.xt" and real_clap[2].uid == "org.surge.fx",
+  "CLAP real schema parsing failed for multi-plugin bundle")
+
+-- rule-of-30-plugin-presets.lua: hard-tuned ordering, word-boundary OH, case-insensitivity, new branches.
+local presets = assert(loadfile("rule-of-30-plugin-presets.lua"))()
+local tuned_chain = presets.getChainForTrack("Lead Vocal (Hard-Tuned)")
+check(tuned_chain and tuned_chain.name == "Lead Vocal (Hard-Tuned)",
+  "Hard-Tuned vocal track must map to lead_tuned, not lead_core")
+check(presets.getChainForTrack("JOHN") == nil,
+  "JOHN must not falsely match OH overheads")
+local oh_chain = presets.getChainForTrack("Drum OH L")
+check(oh_chain and oh_chain.name == "Overheads",
+  "Drum OH L must match Overheads")
+local scream_chain = presets.getChainForTrack("Scream Throw")
+check(scream_chain and scream_chain.name == "Scream Throw",
+  "Scream Throw must match scream_throw")
+local talking_chain = presets.getChainForTrack("Texture Guitars (Talking)")
+check(talking_chain and talking_chain.name == "Texture Guitars (Talking)",
+  "Texture Guitars (Talking) must match texture_talking")
+local glitch_chain = presets.getChainForTrack("Data Stream Bus")
+check(glitch_chain and glitch_chain.name == "Data Stream Bus",
+  "Data Stream Bus must match glitch.data_stream")
+local master_chain = presets.getChainForTrack("Master Bus")
+check(master_chain and master_chain.name == "Mastering Chain",
+  "Master Bus must match master.mastering")
 
 -- Build and implement every session type against the in-memory REAPER API.
 assert(loadfile("SGM_Professional_Session_Builder.lua"))()

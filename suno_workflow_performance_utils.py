@@ -4,27 +4,58 @@ Provides async processing and performance monitoring capabilities
 """
 
 import asyncio
+import atexit
 import time
 import functools
 import logging
 import math
 import os
 import shutil
+import sys
+import threading
 import uuid
 from typing import Callable, Any, Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from dataclasses import dataclass, field
-import psutil
 import gc
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import resource
+except ImportError:
+    resource = None
+
 logger = logging.getLogger(__name__)
+
+
+def _current_memory_mb(process) -> float:
+    """Return current process RSS in MB, falling back gracefully if psutil is absent."""
+    if process is not None:
+        return process.memory_info().rss / 1024 / 1024
+    if resource is not None:
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # macOS reports bytes; Linux reports kilobytes.
+        if sys.platform == "darwin":
+            return usage / 1024 / 1024
+        return usage / 1024
+    return 0.0
+
+
+def _current_cpu_percent(process) -> float:
+    if process is not None:
+        return process.cpu_percent()
+    return 0.0
 
 
 @dataclass
 class PerformanceMetrics:
     """Performance metrics for monitoring"""
 
-    start_time: float = field(default_factory=time.time)
+    start_time: float = field(default_factory=time.monotonic)
     end_time: Optional[float] = None
     duration: Optional[float] = None
     memory_usage_mb: Optional[float] = None
@@ -39,16 +70,16 @@ class PerformanceMonitor:
 
     def __init__(self):
         self.metrics: Dict[str, PerformanceMetrics] = {}
-        self.process = psutil.Process()
+        self.process = psutil.Process() if psutil is not None else None
 
     def start_monitoring(self, operation_name: str) -> str:
         """Start monitoring an operation"""
         # Millisecond timestamps collide when operations start together.
         monitor_id = f"{operation_name}_{uuid.uuid4().hex}"
         self.metrics[monitor_id] = PerformanceMetrics(
-            start_time=time.time(),
-            memory_usage_mb=self.process.memory_info().rss / 1024 / 1024,
-            cpu_usage_percent=self.process.cpu_percent(),
+            start_time=time.monotonic(),
+            memory_usage_mb=_current_memory_mb(self.process),
+            cpu_usage_percent=_current_cpu_percent(self.process),
         )
         return monitor_id
 
@@ -60,15 +91,15 @@ class PerformanceMonitor:
             raise ValueError(f"Monitor ID {monitor_id} not found")
 
         metrics = self.metrics[monitor_id]
-        metrics.end_time = time.time()
+        metrics.end_time = time.monotonic()
         metrics.duration = metrics.end_time - metrics.start_time
         metrics.operations_completed = operations_completed
 
         if metrics.duration > 0:
             metrics.operations_per_second = operations_completed / metrics.duration
 
-        metrics.memory_usage_mb = self.process.memory_info().rss / 1024 / 1024
-        metrics.cpu_usage_percent = self.process.cpu_percent()
+        metrics.memory_usage_mb = _current_memory_mb(self.process)
+        metrics.cpu_usage_percent = _current_cpu_percent(self.process)
 
         return metrics
 
@@ -106,7 +137,7 @@ class PerformanceMonitor:
         print(
             f"Avg Operations/sec: {total_operations / total_duration:.2f}"
             if total_duration > 0
-            else "N/A"
+            else "Avg Operations/sec: N/A"
         )
         print(f"Avg Memory Usage: {avg_memory:.1f} MB")
         print("=" * 60)
@@ -167,13 +198,35 @@ class AsyncProcessor:
     """Async processing utilities for CPU and I/O bound operations"""
 
     def __init__(self, max_workers: Optional[int] = None):
-        self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+        if max_workers is None:
+            self.max_workers = min(32, (os.cpu_count() or 1) + 4)
+        else:
+            self.max_workers = max_workers
         if self.max_workers < 1:
             raise ValueError("max_workers must be at least 1")
-        self.thread_executor = ThreadPoolExecutor(max_workers=self.max_workers)
-        self.process_executor = ProcessPoolExecutor(
-            max_workers=min(4, os.cpu_count() or 1)
-        )
+        self._lock = threading.Lock()
+        self._thread_executor: Optional[ThreadPoolExecutor] = None
+        self._process_executor: Optional[ProcessPoolExecutor] = None
+
+    @property
+    def thread_executor(self) -> ThreadPoolExecutor:
+        if self._thread_executor is None:
+            with self._lock:
+                if self._thread_executor is None:
+                    self._thread_executor = ThreadPoolExecutor(
+                        max_workers=self.max_workers
+                    )
+        return self._thread_executor
+
+    @property
+    def process_executor(self) -> ProcessPoolExecutor:
+        if self._process_executor is None:
+            with self._lock:
+                if self._process_executor is None:
+                    self._process_executor = ProcessPoolExecutor(
+                        max_workers=min(4, os.cpu_count() or 1)
+                    )
+        return self._process_executor
 
     async def run_cpu_bound(self, func: Callable, *args, **kwargs) -> Any:
         """Run a CPU-bound function in the process pool, including keyword args."""
@@ -244,9 +297,14 @@ class AsyncProcessor:
         return await asyncio.gather(*tasks, return_exceptions=True)
 
     def close(self, wait: bool = True):
-        """Shut down both executors; safe to call more than once."""
-        self.thread_executor.shutdown(wait=wait)
-        self.process_executor.shutdown(wait=wait)
+        """Shut down initialized executors; safe to call more than once."""
+        with self._lock:
+            thread_exec, self._thread_executor = self._thread_executor, None
+            process_exec, self._process_executor = self._process_executor, None
+        if thread_exec is not None:
+            thread_exec.shutdown(wait=wait)
+        if process_exec is not None:
+            process_exec.shutdown(wait=wait)
 
     def __enter__(self):
         return self
@@ -268,11 +326,11 @@ class MemoryManager:
 
     def __init__(self, max_memory_mb: float = 4096):
         self.max_memory_mb = max_memory_mb
-        self.process = psutil.Process()
+        self.process = psutil.Process() if psutil is not None else None
 
     def get_memory_usage(self) -> float:
         """Get current memory usage in MB"""
-        return self.process.memory_info().rss / 1024 / 1024
+        return _current_memory_mb(self.process)
 
     def check_memory_limit(self) -> bool:
         """Check if memory usage exceeds limit"""
@@ -292,13 +350,32 @@ class MemoryManager:
         except (ImportError, AttributeError):
             pass
 
-    async def wait_for_memory(self, target_mb: Optional[float] = None):
-        """Wait until memory usage drops below target"""
-        target_mb = target_mb or (self.max_memory_mb * 0.8)
+    async def wait_for_memory(
+        self, target_mb: Optional[float] = None, timeout: float = 30.0
+    ) -> bool:
+        """Wait until memory usage drops below target, or return False on timeout."""
+        if target_mb is None:
+            target_mb = self.max_memory_mb * 0.8
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be non-negative")
 
+        deadline = (time.monotonic() + timeout) if timeout is not None else None
         while self.get_memory_usage() > target_mb:
             self.force_garbage_collection()
-            await asyncio.sleep(0.1)  # Brief pause
+            if self.get_memory_usage() <= target_mb:
+                return True
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning(
+                        f"Timed out waiting for memory <= {target_mb:.1f} MB "
+                        f"(current: {self.get_memory_usage():.1f} MB)"
+                    )
+                    return False
+                await asyncio.sleep(min(0.1, remaining))
+            else:
+                await asyncio.sleep(0.1)
+        return True
 
     def with_memory_management(self, func: Callable) -> Callable:
         """Decorator to add memory management to function"""
@@ -331,8 +408,9 @@ class MemoryManager:
         return wrapper
 
 
-# Global instances
+# Global instances (executors are created lazily on first use)
 async_processor = AsyncProcessor()
+atexit.register(async_processor.close, False)
 memory_manager = MemoryManager()
 
 
@@ -411,8 +489,10 @@ def get_optimal_chunk_size(
     audio_duration: float, target_chunk_duration: float = 10.0
 ) -> int:
     """Return a power-of-two chunk count that covers the full duration."""
-    if target_chunk_duration <= 0:
-        raise ValueError("target_chunk_duration must be positive")
+    if not math.isfinite(audio_duration) or audio_duration < 0:
+        raise ValueError("audio_duration must be a non-negative finite number")
+    if not math.isfinite(target_chunk_duration) or target_chunk_duration <= 0:
+        raise ValueError("target_chunk_duration must be a positive finite number")
     if audio_duration <= target_chunk_duration:
         return 1
 

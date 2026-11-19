@@ -50,7 +50,7 @@ local function msg(message)
 end
 
 local function normalized(path)
-  local value = path:gsub("\\", "/"):gsub("/+$", ""):lower()
+  local value = path:gsub("\\", "/"):gsub("/+", "/"):gsub("/+$", ""):lower()
   return value
 end
 
@@ -97,10 +97,15 @@ local function write_manifest(copied)
   local manifest_path = install_path .. "installed-files.txt"
   local file, open_error = io.open(manifest_path, "w")
   if not file then return false, open_error end
-  file:write("SGM REAPER Scripts installer v" .. script_version .. "\n")
-  file:write("Installed " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
-  for _, path in ipairs(copied) do file:write(path .. "\n") end
+  local lines = {
+    "SGM REAPER Scripts installer v" .. script_version,
+    "Installed " .. os.date("%Y-%m-%d %H:%M:%S"),
+    "",
+  }
+  for _, path in ipairs(copied) do table.insert(lines, path) end
+  local ok, write_error = file:write(table.concat(lines, "\n") .. "\n")
   file:close()
+  if not ok then return false, write_error end
   return true
 end
 

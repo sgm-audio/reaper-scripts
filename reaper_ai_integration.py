@@ -12,12 +12,51 @@ import urllib.parse
 import urllib.request
 import json
 
-# REAPER injects RPR_* functions into ReaScript's Python globals (or __main__).
+try:
+    import reaper_python as _reaper_python
+except ImportError:
+    _reaper_python = None
+
+# REAPER injects RPR_* functions into reaper_python, module globals, or __main__.
 # They are absent when this module is imported by standalone tools or tests.
 have_reaper = (
     "RPR_GetProjectPath" in globals()
+    or (_reaper_python is not None and hasattr(_reaper_python, "RPR_GetProjectPath"))
     or hasattr(sys.modules.get("__main__"), "RPR_GetProjectPath")
 )
+
+
+def _rpr(name):
+    fn = globals().get(name)
+    if fn is None and _reaper_python is not None:
+        fn = getattr(_reaper_python, name, None)
+    if fn is None:
+        fn = getattr(sys.modules.get("__main__"), name, None)
+    if fn is None:
+        raise NameError("REAPER API '%s' is not available" % name)
+    return fn
+
+
+def _is_valid_ptr(ptr, expected_type=None):
+    if not ptr:
+        return False
+    if isinstance(ptr, str):
+        lower = ptr.lower()
+        if lower.endswith("0x0000000000000000") or lower.endswith("0x00000000") or lower == "(null)":
+            return False
+    if expected_type:
+        validate = (
+            globals().get("RPR_ValidatePtr")
+            or (getattr(_reaper_python, "RPR_ValidatePtr", None) if _reaper_python is not None else None)
+            or getattr(sys.modules.get("__main__"), "RPR_ValidatePtr", None)
+        )
+        if validate is not None:
+            try:
+                return bool(validate(ptr, expected_type))
+            except Exception:
+                return False
+    return True
+
 
 try:
     import tkinter
@@ -33,7 +72,11 @@ log_level = WARNING
 
 def log(message, level=NOTICE):
     if log_level > level: return
-    show_msg = globals().get("RPR_ShowConsoleMsg") or getattr(sys.modules.get("__main__"), "RPR_ShowConsoleMsg", None)
+    show_msg = (
+        globals().get("RPR_ShowConsoleMsg")
+        or (getattr(_reaper_python, "RPR_ShowConsoleMsg", None) if _reaper_python is not None else None)
+        or getattr(sys.modules.get("__main__"), "RPR_ShowConsoleMsg", None)
+    )
     if have_reaper and show_msg:
         show_msg(message + "\n")
     else:
@@ -47,101 +90,101 @@ class ReaperInterface:
         self.insertion_track = None
 
     def select_aaf(self):
-        ok, filename, _, _ = RPR_GetUserFileNameForRead("", "Import AAF", ".aaf")
+        ok, filename, _, _ = _rpr("RPR_GetUserFileNameForRead")("", "Import AAF", ".aaf")
         if not ok: return None
         return filename
 
     def get_project_directory(self):
-        directory, _ = RPR_GetProjectPath("", 512)
+        directory, _ = _rpr("RPR_GetProjectPath")("", 512)
         return directory
 
     def create_track(self, name):
-        track_index = RPR_GetNumTracks()
-        RPR_InsertTrackAtIndex(track_index, False)
-        track = RPR_GetTrack(0, track_index)
-        RPR_GetSetMediaTrackInfo_String(track, "P_NAME", name, True)
+        track_index = _rpr("RPR_GetNumTracks")()
+        _rpr("RPR_InsertTrackAtIndex")(track_index, False)
+        track = _rpr("RPR_GetTrack")(0, track_index)
+        _rpr("RPR_GetSetMediaTrackInfo_String")(track, "P_NAME", name, True)
         return track
 
     def set_track_volume(self, track, volume):
-        RPR_SetMediaTrackInfo_Value(track, "D_VOL", volume)
+        _rpr("RPR_SetMediaTrackInfo_Value")(track, "D_VOL", volume)
 
     def set_track_volume_envelope(self, track, volume_data):
-        envelope = RPR_GetTrackEnvelopeByName(track, "Volume")
-        if not envelope:
-            RPR_SetOnlyTrackSelected(track)
-            RPR_Main_OnCommand(40406, 0)  # Show volume envelope.
-            envelope = RPR_GetTrackEnvelopeByName(track, "Volume")
-        if not envelope:
+        envelope = _rpr("RPR_GetTrackEnvelopeByName")(track, "Volume")
+        if not _is_valid_ptr(envelope, "TrackEnvelope*"):
+            _rpr("RPR_SetOnlyTrackSelected")(track)
+            _rpr("RPR_Main_OnCommand")(40406, 0)  # Show volume envelope.
+            envelope = _rpr("RPR_GetTrackEnvelopeByName")(track, "Volume")
+        if not _is_valid_ptr(envelope, "TrackEnvelope*"):
             log("Could not access Volume envelope for track.", WARNING)
             return
-        scaling_mode = RPR_GetEnvelopeScalingMode(envelope)
+        scaling_mode = _rpr("RPR_GetEnvelopeScalingMode")(envelope)
         for point in volume_data:
-            value = RPR_ScaleToEnvelopeMode(scaling_mode, point["value"])
-            RPR_InsertEnvelopePoint(envelope, point["time"], value, 0, 0.0, False, True)
-        RPR_Envelope_SortPoints(envelope)
+            value = _rpr("RPR_ScaleToEnvelopeMode")(scaling_mode, point["value"])
+            _rpr("RPR_InsertEnvelopePoint")(envelope, point["time"], value, 0, 0.0, False, True)
+        _rpr("RPR_Envelope_SortPoints")(envelope)
 
     def set_track_panning(self, track, panning):
-        RPR_SetMediaTrackInfo_Value(track, "D_PAN", panning)
+        _rpr("RPR_SetMediaTrackInfo_Value")(track, "D_PAN", panning)
 
     def set_track_panning_envelope(self, track, panning_data):
-        envelope = RPR_GetTrackEnvelopeByName(track, "Pan")
-        if not envelope:
-            RPR_SetOnlyTrackSelected(track)
-            RPR_Main_OnCommand(40407, 0)  # Show pan envelope.
-            envelope = RPR_GetTrackEnvelopeByName(track, "Pan")
-        if not envelope:
+        envelope = _rpr("RPR_GetTrackEnvelopeByName")(track, "Pan")
+        if not _is_valid_ptr(envelope, "TrackEnvelope*"):
+            _rpr("RPR_SetOnlyTrackSelected")(track)
+            _rpr("RPR_Main_OnCommand")(40407, 0)  # Show pan envelope.
+            envelope = _rpr("RPR_GetTrackEnvelopeByName")(track, "Pan")
+        if not _is_valid_ptr(envelope, "TrackEnvelope*"):
             log("Could not access Pan envelope for track.", WARNING)
             return
         for point in panning_data:
-            RPR_InsertEnvelopePoint(envelope, point["time"], point["value"], 0, 0.0, False, True)
-        RPR_Envelope_SortPoints(envelope)
+            _rpr("RPR_InsertEnvelopePoint")(envelope, point["time"], point["value"], 0, 0.0, False, True)
+        _rpr("RPR_Envelope_SortPoints")(envelope)
 
     def create_item(self, track, src, offset, pos, dur):
         if not src or not os.path.isfile(src):
             log("Skipping missing media source: %s" % (src or "(empty)"), WARNING)
             return None
-        RPR_SetOnlyTrackSelected(self.insertion_track)
-        RPR_SetEditCurPos(0.0, False, False)
-        inserted = RPR_InsertMedia(src, 0)
+        _rpr("RPR_SetOnlyTrackSelected")(self.insertion_track)
+        _rpr("RPR_SetEditCurPos")(0.0, False, False)
+        inserted = _rpr("RPR_InsertMedia")(src, 0)
         if not inserted:
             log("RPR_InsertMedia failed for: %s" % src, WARNING)
             return None
-        item = RPR_GetTrackMediaItem(self.insertion_track, 0)
-        if not item:
+        item = _rpr("RPR_GetTrackMediaItem")(self.insertion_track, 0)
+        if not _is_valid_ptr(item, "MediaItem*"):
             log("Inserted media item not found for: %s" % src, WARNING)
             return None
-        RPR_MoveMediaItemToTrack(item, track)
-        RPR_SetMediaItemInfo_Value(item, "D_POSITION", pos)
-        RPR_SetMediaItemInfo_Value(item, "D_LENGTH", dur)
-        take = RPR_GetMediaItemTake(item, 0)
-        if take:
-            RPR_SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offset)
+        _rpr("RPR_MoveMediaItemToTrack")(item, track)
+        _rpr("RPR_SetMediaItemInfo_Value")(item, "D_POSITION", pos)
+        _rpr("RPR_SetMediaItemInfo_Value")(item, "D_LENGTH", dur)
+        take = _rpr("RPR_GetMediaItemTake")(item, 0)
+        if _is_valid_ptr(take, "MediaItem_Take*"):
+            _rpr("RPR_SetMediaItemTakeInfo_Value")(take, "D_STARTOFFS", offset)
         return item
 
     def set_item_fades(self, item, fadein=None, fadeout=None, fadeintype=0, fadeouttype=0):
-        if not item:
+        if not _is_valid_ptr(item, "MediaItem*"):
             return
         if fadein:
-            RPR_SetMediaItemInfo_Value(item, "D_FADEINLEN", fadein)
-            RPR_SetMediaItemInfo_Value(item, "C_FADEINSHAPE", fadeintype)
+            _rpr("RPR_SetMediaItemInfo_Value")(item, "D_FADEINLEN", fadein)
+            _rpr("RPR_SetMediaItemInfo_Value")(item, "C_FADEINSHAPE", fadeintype)
         if fadeout:
-            RPR_SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fadeout)
-            RPR_SetMediaItemInfo_Value(item, "C_FADEOUTSHAPE", fadeouttype)
+            _rpr("RPR_SetMediaItemInfo_Value")(item, "D_FADEOUTLEN", fadeout)
+            _rpr("RPR_SetMediaItemInfo_Value")(item, "C_FADEOUTSHAPE", fadeouttype)
 
     def set_item_volume(self, item, volume):
-        if item:
-            RPR_SetMediaItemInfo_Value(item, "D_VOL", volume)
+        if _is_valid_ptr(item, "MediaItem*"):
+            _rpr("RPR_SetMediaItemInfo_Value")(item, "D_VOL", volume)
 
     def create_marker(self, pos, name="", colour=None):
         colour_code = 0
         if colour:
-            colour_code = RPR_ColorToNative(colour["r"], colour["g"], colour["b"]) | 0x1000000
-        RPR_AddProjectMarker2(0, False, pos, 0.0, name, 0, colour_code)
+            colour_code = _rpr("RPR_ColorToNative")(colour["r"], colour["g"], colour["b"]) | 0x1000000
+        _rpr("RPR_AddProjectMarker2")(0, False, pos, 0.0, name, 0, colour_code)
 
     def build_project(self, data):
-        saved_cursor = RPR_GetCursorPosition()
-        RPR_Undo_BeginBlock()
-        RPR_PreventUIRefresh(1)
+        saved_cursor = _rpr("RPR_GetCursorPosition")()
+        _rpr("RPR_Undo_BeginBlock")()
+        _rpr("RPR_PreventUIRefresh")(1)
         try:
             self.insertion_track = self.create_track("Insertion")
             for track_data in data["tracks"]:
@@ -182,13 +225,13 @@ class ReaperInterface:
             for marker_data in data["markers"]:
                 self.create_marker(marker_data["position"], marker_data.get("name", ""), marker_data.get("colour", None))
         finally:
-            if self.insertion_track:
-                RPR_DeleteTrack(self.insertion_track)
+            if _is_valid_ptr(self.insertion_track, "MediaTrack*"):
+                _rpr("RPR_DeleteTrack")(self.insertion_track)
                 self.insertion_track = None
-            RPR_SetEditCurPos(saved_cursor, False, False)
-            RPR_PreventUIRefresh(-1)
-            RPR_Undo_EndBlock("Import AAF", -1)
-            RPR_UpdateArrange()
+            _rpr("RPR_SetEditCurPos")(saved_cursor, False, False)
+            _rpr("RPR_PreventUIRefresh")(-1)
+            _rpr("RPR_Undo_EndBlock")("Import AAF", -1)
+            _rpr("RPR_UpdateArrange")()
 
 
 
@@ -225,11 +268,10 @@ class AAFInterface:
 
     def build_wav(self, fname, data, depth=16, rate=48000, channels=1):
         with wave.open(fname, "wb") as f:
-            f.setnchannels(channels)
-            f.setsampwidth(int(depth / 8))
-            f.setframerate(rate)
+            f.setnchannels(max(1, int(channels)))
+            f.setsampwidth(max(1, int(depth / 8)))
+            f.setframerate(int(round(rate)))
             f.writeframesraw(data)
-            f.close()
 
     def aafrational_value(self, rational):
         return rational.numerator / rational.denominator
@@ -245,7 +287,10 @@ class AAFInterface:
 
     def get_linked_essence(self, mob):
         try:
-            url = mob.descriptor.locator[0]["URLString"].value
+            locators = list(mob.descriptor.locator)
+            if not locators:
+                return ""
+            url = locators[-1]["URLString"].value
             # file:///C%3a/Users/user/My%20video.mp4
             url = urllib.parse.urlparse(url)
             url = url.netloc + url.path
@@ -271,26 +316,28 @@ class AAFInterface:
     def extract_embedded_essence(self, mob, filename):
         log("Extracting essence %s..." % filename)
         stream = mob.essence.open()
-        data = stream.read()
-        stream.close()
+        try:
+            data = stream.read()
+        finally:
+            stream.close()
 
         meta = mob.descriptor
         data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
         if data_fmt == "MXF":
             sample_depth = meta["QuantizationBits"].value
-            sample_rate = meta["SampleRate"].value
-            sample_rate = self.aafrational_value(sample_rate)
-            self.build_wav(filename, data, sample_depth, sample_rate)
+            sample_rate = int(round(self.aafrational_value(meta["SampleRate"].value)))
+            channels = int(meta["Channels"].value) if "Channels" in meta else 1
+            self.build_wav(filename, data, sample_depth, sample_rate, channels=channels)
         else:
             with open(filename, "wb") as f:
                 f.write(data)
-                f.close()
 
         return filename
 
     def extract_essence(self, target, callback):
+        used_filenames = set()
         for master_mob in self.aaf.content.mastermobs():
-            self.essence_data[master_mob.name] = {}
+            mob_entries = self.essence_data.setdefault(master_mob.name, {})
             for slot in master_mob.slots:
                 source_mob = None
                 if isinstance(slot.segment, aaf2.components.Sequence):
@@ -302,23 +349,29 @@ class AAFInterface:
                     source_mob = slot.segment.mob
 
                 if source_mob is None:
-                    self.essence_data[master_mob.name][slot.slot_id] = ""
+                    mob_entries[slot.slot_id] = ""
                     log("Cannot find essence for %s slot %d" % (master_mob.name, slot.slot_id), WARNING)
                     continue
 
                 if slot.segment.media_kind == "Picture":
                     # Video files cannot be embedded in the AAF.
-                    self.essence_data[master_mob.name][slot.slot_id] = self.get_linked_essence(source_mob)
+                    mob_entries[slot.slot_id] = self.get_linked_essence(source_mob)
                     continue
                 if source_mob.essence:
                     raw_name = "%s_%s" % (master_mob.name or "mob", slot.name or str(slot.slot_id))
-                    safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in raw_name).strip(" .") or "essence"
+                    base_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in raw_name).strip(" .") or "essence"
+                    safe_name = base_name
+                    suffix = 2
+                    while safe_name.lower() in used_filenames:
+                        safe_name = "%s_%d" % (base_name, suffix)
+                        suffix += 1
+                    used_filenames.add(safe_name.lower())
                     filename = os.path.join(target, safe_name + ".wav")
                     if callback:
                         callback("Extracting %s..." % (safe_name + ".wav"))
-                    self.essence_data[master_mob.name][slot.slot_id] = self.extract_embedded_essence(source_mob, filename)
+                    mob_entries[slot.slot_id] = self.extract_embedded_essence(source_mob, filename)
                 else:
-                    self.essence_data[master_mob.name][slot.slot_id] = self.get_linked_essence(source_mob)
+                    mob_entries[slot.slot_id] = self.get_linked_essence(source_mob)
 
     def get_essence_file(self, mob_name, slot_id):
         try:
@@ -351,12 +404,19 @@ class AAFInterface:
     # Instead of using per-item volume curves (aka take volume envelope),
     # we collect data from items and "render" it to the track volume envelope.
     def collect_vol_pan_automation(self, track):
+        items = track.get("items", [])
+        neutral_values = {
+            "volume_envelope": 1.0,
+            "panning_envelope": 0.0,
+        }
         envelopes = {
             "volume_envelope": [],
-            "panning_envelope": []
+            "panning_envelope": [],
         }
-        for envelope in envelopes:
-            for item in track["items"]:
+        for envelope, neutral in neutral_values.items():
+            if not any(envelope in item for item in items):
+                continue
+            for item in items:
                 if envelope in item:
                     for point in item[envelope]:
                         envelopes[envelope].append({
@@ -365,22 +425,21 @@ class AAFInterface:
                         })
                     del item[envelope]
                 else:
-                    if not envelopes[envelope]: continue
                     # We don't want items without automation to be affected
-                    # by automation added by other items
+                    # by automation added by other items (leading or trailing).
                     envelopes[envelope].append({
                         "time": item["position"],
-                        "value": 1.0
+                        "value": neutral
                     })
                     envelopes[envelope].append({
                         "time": item["position"] + item["duration"],
-                        "value": 1.0
+                        "value": neutral
                     })
 
-        # Add only if not empty
-        if envelopes["volume_envelope"]:
+        # Add only if not empty, and preserve existing track-level envelopes
+        if envelopes["volume_envelope"] and not track.get("volume_envelope"):
             track["volume_envelope"] = envelopes["volume_envelope"]
-        if envelopes["panning_envelope"]:
+        if envelopes["panning_envelope"] and not track.get("panning_envelope"):
             track["panning_envelope"] = envelopes["panning_envelope"]
 
         return track
@@ -399,7 +458,8 @@ class AAFInterface:
         # be ignored if other software picks different operation or parameter names.
         if group.operation.name in ["Mono Audio Gain", "Audio Gain"]:
             for p in group.parameters:
-                if p.name not in ["Amplitude", "Amplitude multiplier", "Level"]: continue
+                if p.name not in ["Amplitude", "Amplitude multiplier", "Level"]:
+                    continue
                 if isinstance(p, aaf2.misc.VaryingValue):
                     item["volume_envelope"] = self.get_point_list(p, group.length / edit_rate)
                 elif isinstance(p, aaf2.misc.ConstantValue):
@@ -407,12 +467,21 @@ class AAFInterface:
 
         if group.operation.name == "Mono Audio Pan":
             for p in group.parameters:
-                points = self.get_point_list(p, group.length / edit_rate)
-                if p.name == "Pan value":
+                if p.name != "Pan value":
+                    continue
+                duration = group.length / edit_rate
+                if isinstance(p, aaf2.misc.VaryingValue):
+                    points = self.get_point_list(p, duration)
                     item["panning_envelope"] = [{
                         "time": point["time"],
                         "value": point["value"] * -2 + 1
                     } for point in points]
+                elif isinstance(p, aaf2.misc.ConstantValue):
+                    pan_val = self.aafrational_value(p.value) * -2 + 1
+                    item["panning_envelope"] = [
+                        {"time": 0.0, "value": pan_val},
+                        {"time": duration, "value": pan_val},
+                    ]
 
         if group.operation.name == "Audio Effect":
             for p in group.parameters:
@@ -424,11 +493,17 @@ class AAFInterface:
                 if p.name == "SpeedRatio":
                     item["playbackrate"] = self.aafrational_value(p.value)
 
-        segment = group.segments[0]
+        segments = list(getattr(group, "segments", []) or [])
+        if not segments:
+            return item
+        segment = segments[0]
 
         # Aaaargh, why is this a thing?
         if isinstance(segment, aaf2.components.Sequence):
-            segment = segment.components[0]
+            components = list(getattr(segment, "components", []) or [])
+            if not components:
+                return item
+            segment = components[0]
 
         if isinstance(segment, aaf2.components.OperationGroup):
             item.update(self.parse_operation_group(segment, edit_rate))
@@ -494,7 +569,7 @@ class AAFInterface:
                             fade_type = 1
                     except Exception:
                         pass
-                    if fade == 0:
+                    if fade == 0 and items:
                         items[-1]["fadeout"] = fade_length
                         items[-1]["fadeouttype"] = fade_type
                     if fade != 1:
@@ -534,28 +609,44 @@ class AAFInterface:
 
     def get_sound_track(self, slot):
         data = {
-            "name": slot.name
+            "name": slot.name,
+            "items": [],
         }
         edit_rate = self.aafrational_value(slot.edit_rate)
         segment = slot.segment
         if isinstance(segment, aaf2.components.OperationGroup):
+            child_segments = list(getattr(segment, "segments", []) or [])
             # Maybe we should check for segment.operation.name as well?
             for p in segment.parameters:
                 if p.name == "Pan value":
-                    data["panning"] = self.aafrational_value(p.value) * 2 - 1
-                if p.name in ["Pan", "Pan Level"]:
-                    # Sometimes segment.length is wrong so we have to use
-                    # the length of the data segment instead.
-                    real_length = segment.length / edit_rate
-                    if self.encoder == "DaVinci Resolve":
-                        real_length = segment.segments[0].length / edit_rate
-                    points = self.get_point_list(p, real_length)
-                    data["panning_envelope"] = [{
-                        "time": point["time"],
-                        "value": point["value"] * -2 + 1
-                        # Reaper can't make up its mind 
-                    } for point in points]
-            data["items"] = self.parse_sequence(segment.segments[0], edit_rate)
+                    if isinstance(p, aaf2.misc.ConstantValue):
+                        data["panning"] = self.aafrational_value(p.value) * 2 - 1
+                    elif isinstance(p, aaf2.misc.VaryingValue):
+                        real_length = segment.length / edit_rate
+                        if self.encoder == "DaVinci Resolve" and child_segments:
+                            real_length = child_segments[0].length / edit_rate
+                        points = self.get_point_list(p, real_length)
+                        data["panning_envelope"] = [{
+                            "time": point["time"],
+                            "value": point["value"] * -2 + 1
+                        } for point in points]
+                elif p.name in ["Pan", "Pan Level"]:
+                    if isinstance(p, aaf2.misc.ConstantValue):
+                        data["panning"] = self.aafrational_value(p.value) * 2 - 1
+                    elif isinstance(p, aaf2.misc.VaryingValue):
+                        # Sometimes segment.length is wrong so we have to use
+                        # the length of the data segment instead.
+                        real_length = segment.length / edit_rate
+                        if self.encoder == "DaVinci Resolve" and child_segments:
+                            real_length = child_segments[0].length / edit_rate
+                        points = self.get_point_list(p, real_length)
+                        data["panning_envelope"] = [{
+                            "time": point["time"],
+                            "value": point["value"] * -2 + 1
+                            # Reaper can't make up its mind
+                        } for point in points]
+            if child_segments:
+                data["items"] = self.parse_sequence(child_segments[0], edit_rate)
         elif isinstance(segment, aaf2.components.Sequence):
             data["items"] = self.parse_sequence(segment, edit_rate)
         return data
@@ -564,8 +655,11 @@ class AAFInterface:
         markers = []
         edit_rate = self.aafrational_value(slot.edit_rate)
         for component in slot.segment.components:
+            if "Position" not in component:
+                continue
+            comment = component["Comment"].value if "Comment" in component else ""
             marker = {
-                "name": component["Comment"].value,
+                "name": comment,
                 "position": component["Position"].value / edit_rate
             }
             if "CommentMarkerColour" in component:
@@ -587,7 +681,12 @@ class AAFInterface:
             "markers": []
         }
 
-        for slot in list(self.aaf.content.compositionmobs())[composition].slots:
+        compositions = list(self.aaf.content.compositionmobs())
+        if not 0 <= composition < len(compositions):
+            log("Composition index %s out of range." % composition, ERROR)
+            return data
+
+        for slot in compositions[composition].slots:
             try:
                 if slot.media_kind == "Picture":
                     picture_tracks = self.get_picture_tracks(slot)
@@ -678,18 +777,23 @@ class UserInteraction:
                 if not 0 <= composition_id < len(composition_list):
                     raise IndexError("Composition index out of range")
                 break
-            except Exception:
+            except (EOFError, KeyboardInterrupt):
+                return None
+            except (ValueError, IndexError):
                 print("Invalid input.")
         return composition_id
 
     @staticmethod
     def get_composition_gui(composition_list):
 
-        selection = 0
+        selection = None
 
         def ok_callback():
             nonlocal selection
-            selection = listbox.curselection()[0]
+            selected = listbox.curselection()
+            if not selected:
+                return
+            selection = selected[0]
             window.destroy()
 
         def doubleclick_callback(e):
@@ -726,9 +830,10 @@ class UserInteraction:
 
     @staticmethod
     def get_composition_awkward(composition_list):
+        mb = _rpr("RPR_MB")
         for i, comp in enumerate(composition_list):
             message = "Do you want to import composition %s?" % comp
-            result = RPR_MB(message, "Select composition", 4)
+            result = mb(message, "Select composition", 4)
             if result == 6:
                 return i
         return None
@@ -797,9 +902,9 @@ def import_aaf():
         composition = aaf_interface.get_composition(composition_id)
 
         if have_reaper:
-            existing_tracks = RPR_GetNumTracks()
+            existing_tracks = _rpr("RPR_GetNumTracks")()
             if existing_tracks > 0:
-                answer = RPR_MB(
+                answer = _rpr("RPR_MB")(
                     "The current project already contains %d track(s).\n\n"
                     "Do you want to import this AAF into the current project?" % existing_tracks,
                     "Import AAF — Existing Tracks Detected",

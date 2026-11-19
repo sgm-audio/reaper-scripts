@@ -97,10 +97,14 @@ class SunoReaperWorkflow:
         the same error path. By default the fallback project contains media items;
         pass ``auto_import=False`` to create empty tracks and manual instructions.
         """
+        project_dir = None
+        created_project_dir = False
         try:
             self._validate_input_file(suno_audio_file)
             project_name = self._generate_project_name(suno_audio_file, project_name)
-            project_dir = self._setup_project_directory(suno_audio_file, project_name)
+            project_dir, created_project_dir = self._setup_project_directory(
+                suno_audio_file, project_name
+            )
             should_auto_import = (
                 self.config.auto_import if auto_import is None else auto_import
             )
@@ -143,6 +147,19 @@ class SunoReaperWorkflow:
             self._print_summary(result)
             return result
         except Exception as exc:
+            if project_dir:
+                stems_dir = os.path.join(project_dir, "stems")
+                try:
+                    if os.path.isdir(stems_dir) and not os.listdir(stems_dir):
+                        os.rmdir(stems_dir)
+                except OSError:
+                    pass
+                if created_project_dir:
+                    try:
+                        if os.path.isdir(project_dir) and not os.listdir(project_dir):
+                            os.rmdir(project_dir)
+                    except OSError:
+                        pass
             logger.error("Workflow failed: %s", exc)
             return WorkflowResult(
                 project_dir="",
@@ -167,11 +184,12 @@ class SunoReaperWorkflow:
         self, audio_file: str, project_name: Optional[str]
     ) -> str:
         name = project_name.strip() if project_name else f"{Path(audio_file).stem}_reaper_project"
-        if not name or name in {".", ".."} or any(c in name for c in ("/", "\\", "\0")):
+        invalid_chars = ("/", "\\", "\0", ":", "*", "?", '"', "<", ">", "|")
+        if not name or name in {".", ".."} or any(c in name for c in invalid_chars):
             raise ValueError("Project name must be a non-empty folder name, not a path")
         return name
 
-    def _setup_project_directory(self, audio_file: str, project_name: str) -> str:
+    def _setup_project_directory(self, audio_file: str, project_name: str):
         output_root = self.config.paths.output_dir
         if output_root:
             base_dir = os.path.abspath(os.path.expanduser(output_root))
@@ -187,8 +205,9 @@ class SunoReaperWorkflow:
             )
         if os.path.exists(project_dir) and not os.path.isdir(project_dir):
             raise FileExistsError(f"Project path is an existing file: {project_dir}")
+        existed = os.path.isdir(project_dir)
         os.makedirs(project_dir, exist_ok=True)
-        return project_dir
+        return project_dir, (not existed)
 
     def _separate_stems(self, audio_file: str, project_dir: str) -> Dict[str, str]:
         logger.info("Step 1: separating stems with the Demucs backend")
@@ -205,7 +224,15 @@ class SunoReaperWorkflow:
                 "'.[stem-separation]' extra for real Demucs execution."
             )
 
-        separated = YourMT3StemSeparator(output_dir=stems_dir).separate(audio_file)
+        try:
+            separator = YourMT3StemSeparator(
+                output_dir=stems_dir,
+                model_name=self.config.models.demucs_model,
+                device=self.config.models.device.value,
+            )
+        except TypeError:
+            separator = YourMT3StemSeparator(output_dir=stems_dir)
+        separated = separator.separate(audio_file)
         if not isinstance(separated, dict) or not separated:
             raise RuntimeError("Stem separator returned no stems")
 
@@ -256,7 +283,13 @@ class SunoReaperWorkflow:
 
     @staticmethod
     def _rpp_string(value: str) -> str:
-        return os.fspath(value).replace("\\", "/").replace('"', "'").replace("\n", " ")
+        return (
+            os.fspath(value)
+            .replace("\\", "/")
+            .replace('"', "'")
+            .replace("\r", " ")
+            .replace("\n", " ")
+        )
 
     @staticmethod
     def _media_duration(path: str) -> float:
@@ -299,7 +332,7 @@ class SunoReaperWorkflow:
             ".aiff": "WAVE",
             ".mp3": "MP3",
             ".flac": "FLAC",
-            ".ogg": "OGG",
+            ".ogg": "VORBIS",
             ".m4a": "VIDEO",
         }
         media_source_types = {}
@@ -422,7 +455,7 @@ class SunoReaperWorkflow:
         print("=" * 80 + "\n")
 
 
-def main() -> int:
+def main(argv=None) -> int:
     logging_config = copy.deepcopy(LOGGING_CONFIG)
     log_file = os.getenv("SUNO_LOG_FILE")
     if log_file:
@@ -449,11 +482,12 @@ def main() -> int:
         action="store_true",
         help="Create empty tracks in the fallback project instead of adding media items",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
+    config = get_config_from_env()
     if args.output_dir:
-        os.environ["SUNO_OUTPUT_DIR"] = args.output_dir
-    workflow = SunoReaperWorkflow(template_path=args.template)
+        config.paths.output_dir = args.output_dir
+    workflow = SunoReaperWorkflow(config=config, template_path=args.template)
     result = workflow.process_suno_track(
         suno_audio_file=args.input,
         project_name=args.name,

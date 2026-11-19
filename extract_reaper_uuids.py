@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import platform
+import re
 import sys
 
 
@@ -34,8 +35,9 @@ def get_reaper_resource_path(prompt=False):
 def parse_reaper_ini(ini_path):
     """Parse ``reaper-vstplugins64.ini`` into a name-keyed plugin mapping.
 
-    REAPER stores ``filename=UID,project_id,"Name (Developer)"``. Using the CSV
-    parser preserves quoted commas and removes the quotes around display names.
+    REAPER stores ``filename=mtime_size_hash,plugin_uid,"Name (Developer)"``.
+    Using the CSV parser preserves quoted commas and removes quotes around
+    display names, while stripping REAPER's ``!!!VSTi`` / ``!!!VST3i`` markers.
     """
     plugins = {}
     if not os.path.isfile(ini_path):
@@ -46,7 +48,7 @@ def parse_reaper_ini(ini_path):
     with open(ini_path, "r", encoding="utf-8-sig", errors="replace", newline="") as source:
         for raw_line in source:
             line = raw_line.strip()
-            if not line or line.startswith("[") or "=" not in line:
+            if not line or line.startswith(("[", ";", "#")) or "=" not in line:
                 continue
             filename, data = line.split("=", 1)
             try:
@@ -56,8 +58,9 @@ def parse_reaper_ini(ini_path):
             if len(parts) < 3:
                 continue
 
-            uid = parts[0].strip()
+            uid = parts[1].strip()
             name = ",".join(parts[2:]).strip()
+            name = re.sub(r"!!!VST3?i$", "", name).strip()
             if not name:
                 continue
             lower_name = filename.lower()
@@ -91,7 +94,10 @@ def main(argv=None):
             return 2
         for candidate in (
             "reaper-vstplugins64.ini",
+            "reaper-vstplugins_arm64.ini",
             "reaper-vstplugins-arm64.ini",
+            "reaper-vstplugins_x86_64.ini",
+            "reaper-vstplugins_aarch64.ini",
             "reaper-vstplugins.ini",
         ):
             candidate_path = os.path.join(resource_path, candidate)
@@ -106,11 +112,20 @@ def main(argv=None):
         print("No plugins found. Check the cache path and rescan plugins in REAPER.", file=sys.stderr)
         return 1
 
-    with open(args.output, "w", encoding="utf-8") as output:
-        json.dump(plugins, output, indent=4, ensure_ascii=False)
-        output.write("\n")
+    output_path = os.path.abspath(args.output)
+    try:
+        parent_dir = os.path.dirname(output_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as output:
+            json.dump(plugins, output, indent=4, ensure_ascii=False)
+            output.write("\n")
+    except OSError as exc:
+        print(f"[ERROR] Failed to write {output_path}: {exc}", file=sys.stderr)
+        return 1
+
     print(f"[SUCCESS] Extracted {len(plugins)} plugins.")
-    print(f"Map saved to: {os.path.abspath(args.output)}")
+    print(f"Map saved to: {output_path}")
     return 0
 
 

@@ -4,10 +4,10 @@
 -- @version 2.0
 
 local FORMAT_BY_EXTENSION = {
-  [".dll"] = "vst2", [".vst"] = "vst2", [".vst3"] = "vst3",
+  [".dll"] = "vst2", [".so"] = "vst2", [".vst"] = "vst2", [".vst3"] = "vst3",
   [".component"] = "au", [".clap"] = "clap", [".lv2"] = "lv2",
 }
-local BUNDLE_EXTENSIONS = {[".vst"] = true, [".vst3"] = true, [".component"] = true, [".lv2"] = true}
+local BUNDLE_EXTENSIONS = {[".vst"] = true, [".vst3"] = true, [".component"] = true, [".clap"] = true, [".lv2"] = true}
 
 local function join_path(left, right)
   return left:gsub("[/\\]+$", "") .. "/" .. right
@@ -29,7 +29,7 @@ end
 local function get_scan_paths()
   local paths = {}
   local function add(path) if path and path ~= "" then table.insert(paths, path) end end
-  local os_type = reaper.GetOS()
+  local os_type = reaper.GetOS() or ""
   if os_type == "Win32" or os_type == "Win64" then
     local pf = (os.getenv("ProgramFiles") or "C:/Program Files"):gsub("\\", "/")
     local pf86 = (os.getenv("ProgramFiles(x86)") or "C:/Program Files (x86)"):gsub("\\", "/")
@@ -44,7 +44,7 @@ local function get_scan_paths()
     add(join_path(pf, "Waves/Plug-Ins V16"))
     local localappdata = os.getenv("LOCALAPPDATA")
     if localappdata then add(join_path(localappdata:gsub("\\", "/"), "Programs/Common/VST3")) end
-  elseif os_type:match("^OSX") then
+  elseif os_type:match("^OSX") or os_type:match("^macOS") then
     add("/Library/Audio/Plug-Ins/VST")
     add("/Library/Audio/Plug-Ins/VST3")
     add("/Library/Audio/Plug-Ins/Components")
@@ -225,5 +225,6 @@ _G.SGMRealPluginScanner = {
   findKeyPlugins = findKeyPlugins,
   exportJSON = exportJSON,
   json_string = json_string,
+  get_scan_paths = get_scan_paths,
 }
 main()

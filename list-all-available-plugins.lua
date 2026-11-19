@@ -51,7 +51,9 @@ function PluginScanner:detectCategory(name)
   else return "Utility" end
 end
 
-function PluginScanner:scanDirectory(dir_path, prefix)
+function PluginScanner:scanDirectory(dir_path, prefix, depth)
+  depth = depth or 0
+  if depth > 16 then return {} end
   local plugins = {}
   local index = 0
   while true do
@@ -74,34 +76,71 @@ function PluginScanner:scanDirectory(dir_path, prefix)
   while true do
     local subdir = reaper.EnumerateSubdirectories(dir_path, index)
     if not subdir then break end
-    local nested = self:scanDirectory(path_join(dir_path, subdir), prefix .. subdir .. "/")
+    local nested = self:scanDirectory(path_join(dir_path, subdir), prefix .. subdir .. "/", depth + 1)
     for _, plugin in ipairs(nested) do table.insert(plugins, plugin) end
     index = index + 1
   end
   return plugins
 end
 
+local CLAP_METADATA_KEYS = {
+  file = true, path = true, mtime = true, size = true, timestamp = true,
+  version = true, num_plugins = true, enabled = true, scan_time = true, flags = true,
+}
+
 function PluginScanner:parseCache(ini_path, fallback_type)
   local found = {}
   local file = io.open(ini_path, "r")
   if not file then return found end
+  local current_section = nil
+  local section_file = nil
   for raw_line in file:lines() do
     local line = trim(raw_line)
-    if line ~= "" and not line:match("^%[") then
-      local filename, data = line:match("^(.-)=(.*)$")
-      if filename and data then
-        -- Current cache format: filename=UID,project_id,"Name (Developer)".
-        local uid, _, remainder = data:match("^([^,]*),([^,]*),(.*)$")
-        local name = remainder and trim(remainder) or nil
-        if name then
-          name = name:gsub('^"(.*)"$', "%1"):gsub('""', '"')
-          local plugin_type = plugin_type_from_path(filename, fallback_type)
-          table.insert(found, {
-            name = name,
-            path = filename,
-            uid = trim(uid or ""),
-            type = plugin_type,
-          })
+    if line ~= "" and not line:match("^[;#]") then
+      local section = line:match("^%[(.-)%]$")
+      if section then
+        current_section = trim(section)
+        section_file = nil
+      else
+        local filename, data = line:match("^(.-)=(.*)$")
+        if filename and data then
+          local key = trim(filename)
+          local val = trim(data)
+          -- 3-column CSV cache format: filename=UID,project_id,"Name (Developer)".
+          local uid, _, remainder = data:match("^([^,]*),([^,]*),(.*)$")
+          local name = remainder and trim(remainder) or nil
+          if name then
+            name = name:gsub('^"(.*)"$', "%1"):gsub('""', '"')
+            local plugin_type = plugin_type_from_path(key, fallback_type)
+            table.insert(found, {
+              name = name,
+              path = key,
+              uid = trim(uid or ""),
+              type = plugin_type,
+            })
+          elseif fallback_type == "au" and key:find(":", 1, true) and val ~= "" and not val:match("^<!") then
+            -- Real REAPER AU cache schema: Vendor: Plugin Name=flags
+            table.insert(found, {
+              name = key,
+              path = key,
+              uid = val,
+              type = "au",
+            })
+          elseif fallback_type == "clap" and current_section and current_section:lower() ~= "clapcache" then
+            -- Real REAPER CLAP cache schema: [plugin.clap] / id=Display Name
+            local key_lower = key:lower()
+            if key_lower == "file" or key_lower == "path" then
+              section_file = val
+            elseif not CLAP_METADATA_KEYS[key_lower] and val ~= "" then
+              local clap_name = val:gsub('^"(.*)"$', "%1"):gsub('""', '"')
+              table.insert(found, {
+                name = clap_name,
+                path = section_file or current_section,
+                uid = key,
+                type = "clap",
+              })
+            end
+          end
         end
       end
     end
@@ -143,6 +182,8 @@ function PluginScanner:scanFXBrowser()
     {"reaper-auplugins_arm64.ini", "au"},
     {"reaper-auplugins.ini", "au"},
     {"reaper-lv2plugins64.ini", "lv2"},
+    {"reaper-lv2plugins_arm64.ini", "lv2"},
+    {"reaper-lv2plugins-arm64.ini", "lv2"},
     {"reaper-lv2plugins.ini", "lv2"},
   }
   local seen_cache_files = {}
@@ -157,13 +198,17 @@ function PluginScanner:scanFXBrowser()
     if lower:match("^reaper%-clap%-.*%.ini$") and not seen_cache_files[lower] then
       seen_cache_files[lower] = true
       table.insert(caches, {filename, "clap"})
+    elseif lower:match("^reaper%-lv2plugins.*%.ini$") and not seen_cache_files[lower] then
+      seen_cache_files[lower] = true
+      table.insert(caches, {filename, "lv2"})
     end
     file_idx = file_idx + 1
   end
   local seen = {}
   for _, cache in ipairs(caches) do
     for _, plugin in ipairs(self:parseCache(path_join(resource_path, cache[1]), cache[2])) do
-      local identity = plugin.type .. "\0" .. plugin.path:lower()
+      local unique_id = (plugin.uid and plugin.uid ~= "") and plugin.uid:lower() or plugin.name:lower()
+      local identity = plugin.type .. "\0" .. plugin.path:lower() .. "\0" .. unique_id
       if not seen[identity] then
         seen[identity] = true
         table.insert(plugins.by_type[plugin.type] or plugins.by_type.vst, plugin)
@@ -250,7 +295,7 @@ function PluginScanner:exportToConsole(plugins)
   end
 end
 
-function main()
+local function main()
   local scanner = PluginScanner:new()
   local plugins, scan_error = scanner:scanAllPlugins()
   if not plugins then

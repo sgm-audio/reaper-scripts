@@ -27,7 +27,9 @@ local function getSelectedTracks()
   local tracks = {}
   for i = 0, reaper.CountSelectedTracks(0) - 1 do
     local track = reaper.GetSelectedTrack(0, i)
-    table.insert(tracks, track)
+    if track then
+      table.insert(tracks, track)
+    end
   end
   return tracks
 end
@@ -37,7 +39,9 @@ local function getTrackItems(track)
   local item_count = reaper.CountTrackMediaItems(track)
   for i = 0, item_count - 1 do
     local item = reaper.GetTrackMediaItem(track, i)
-    table.insert(items, item)
+    if item then
+      table.insert(items, item)
+    end
   end
   return items
 end
@@ -51,7 +55,7 @@ local function findFirstTransient(item)
   local sample_rate = reaper.GetMediaSourceSampleRate(source)
   local num_channels = reaper.GetMediaSourceNumChannels(source)
 
-  if not sample_rate or sample_rate <= 0 or not num_channels or num_channels == 0 then return nil end
+  if not sample_rate or sample_rate <= 0 or not num_channels or num_channels <= 0 then return nil end
 
   -- Get audio accessor
   local accessor = reaper.CreateTakeAudioAccessor(take)
@@ -85,26 +89,26 @@ local function findFirstTransient(item)
   end
 
   -- The requested frames are interleaved across channels.
-  -- Check every channel and convert the frame index (not scalar index) to time.
+  -- Record the first frame exceeding threshold and scan the entire window for true peak.
   local transient_frame = nil
   local peak_value = 0
   for frame = 0, samples_to_analyze - 1 do
     for channel = 0, num_channels - 1 do
       local buffer_index = frame * num_channels + channel + 1
       local sample_value = math.abs(audio_buffer[buffer_index])
-      peak_value = math.max(peak_value, sample_value)
-      if sample_value > CONFIG.transient_threshold then
+      if sample_value > peak_value then
+        peak_value = sample_value
+      end
+      if not transient_frame and sample_value > CONFIG.transient_threshold then
         transient_frame = frame
-        break
       end
     end
-    if transient_frame then break end
   end
 
   reaper.DestroyAudioAccessor(accessor)
 
   if transient_frame then
-    local transient_time = start_time + (transient_frame / sample_rate)
+    local transient_time = start_time + accessor_start + (transient_frame / sample_rate)
     return transient_time, peak_value
   else
     return nil, peak_value
@@ -139,6 +143,7 @@ local function alignSelectedTracks()
   -- Step 1: Find transients in all tracks
   local track_data = {}
   local earliest_transient = nil
+  local latest_transient = nil
 
   for i, track in ipairs(tracks) do
     local _, track_name = reaper.GetTrackName(track)
@@ -146,12 +151,14 @@ local function alignSelectedTracks()
 
     if #items > 0 then
       local first_item = items[1]
+      local item_pos = reaper.GetMediaItemInfo_Value(first_item, "D_POSITION")
       local transient_time, peak = findFirstTransient(first_item)
 
       table.insert(track_data, {
         track = track,
         name = track_name,
         item = first_item,
+        item_pos = item_pos,
         transient_time = transient_time,
         peak = peak
       })
@@ -162,6 +169,9 @@ local function alignSelectedTracks()
 
         if not earliest_transient or transient_time < earliest_transient then
           earliest_transient = transient_time
+        end
+        if not latest_transient or transient_time > latest_transient then
+          latest_transient = transient_time
         end
       else
         reaper.ShowConsoleMsg(string.format("  Track %d (%s): No transient found (try lowering the threshold)\n",
@@ -178,10 +188,22 @@ local function alignSelectedTracks()
     return
   end
 
+  -- Avoid clamping items at 0.0s: if shifting left to earliest_transient would
+  -- push any item before 0.0s, align right to latest_transient instead.
+  local target_time = earliest_transient
+  local target_label = "earliest"
+  for _, data in ipairs(track_data) do
+    if data.transient_time and (data.item_pos + (earliest_transient - data.transient_time)) < 0 then
+      target_time = latest_transient
+      target_label = "latest"
+      break
+    end
+  end
+
   local planned_moves = {}
   for _, data in ipairs(track_data) do
     if data.transient_time then
-      local offset = earliest_transient - data.transient_time
+      local offset = target_time - data.transient_time
       if math.abs(offset) > CONFIG.alignment_precision then
         table.insert(planned_moves, {data = data, offset = offset})
       end
@@ -194,27 +216,32 @@ local function alignSelectedTracks()
   end
 
   local answer = reaper.ShowMessageBox(
-    string.format("Align %d track(s) (first item per track) to earliest transient at %.4fs?",
-      #planned_moves, earliest_transient),
+    string.format("Align %d track(s) (first item per track) to %s transient at %.4fs?",
+      #planned_moves, target_label, target_time),
     "Phase Alignment", 1)
   if answer ~= 1 then
     reaper.ShowConsoleMsg("Phase alignment cancelled.\n")
     return
   end
 
-  -- Step 2: Align all tracks to the earliest transient
+  -- Step 2: Align all tracks to the chosen reference transient
   reaper.Undo_BeginBlock()
   reaper.PreventUIRefresh(1)
   local ok, err = pcall(function()
     reaper.ShowConsoleMsg("\n=== ALIGNING TRACKS ===\n")
-    reaper.ShowConsoleMsg("Reference time: " .. string.format("%.4fs", earliest_transient) .. "\n\n")
+    reaper.ShowConsoleMsg("Reference time (" .. target_label .. "): " .. string.format("%.4fs", target_time) .. "\n\n")
 
     for _, data in ipairs(track_data) do
       if data.transient_time then
-        local offset = earliest_transient - data.transient_time
+        local offset = target_time - data.transient_time
         if math.abs(offset) > CONFIG.alignment_precision then
           local actual_offset = nudgeItem(data.item, offset)
-          reaper.ShowConsoleMsg(string.format("  ✓ %s: Adjusted by %.4fs\n", data.name, actual_offset))
+          if math.abs(actual_offset - offset) > CONFIG.alignment_precision then
+            reaper.ShowConsoleMsg(string.format("  ⚠ %s: Requested %.4fs, applied %.4fs (clamped at 0.0s)\n",
+              data.name, offset, actual_offset))
+          else
+            reaper.ShowConsoleMsg(string.format("  ✓ %s: Adjusted by %.4fs\n", data.name, actual_offset))
+          end
         else
           reaper.ShowConsoleMsg(string.format("  ✓ %s: Already aligned\n", data.name))
         end
@@ -247,7 +274,7 @@ local function analyzePhaseCorrelation()
   local tracks = getSelectedTracks()
 
   if #tracks ~= 2 then
-    reaper.ShowConsoleMsg("❌ Please select exactly 2 tracks for correlation analysis\n")
+    reaper.ShowConsoleMsg("❌ Please select exactly 2 tracks for item-position timing comparison\n")
     return
   end
 
@@ -255,7 +282,7 @@ local function analyzePhaseCorrelation()
   local _, name1 = reaper.GetTrackName(track1)
   local _, name2 = reaper.GetTrackName(track2)
 
-  reaper.ShowConsoleMsg("Analyzing correlation between:\n")
+  reaper.ShowConsoleMsg("Comparing item-position timing between:\n")
   reaper.ShowConsoleMsg("  Track 1: " .. name1 .. "\n")
   reaper.ShowConsoleMsg("  Track 2: " .. name2 .. "\n\n")
 
@@ -277,13 +304,18 @@ local function analyzePhaseCorrelation()
     return
   end
 
-  -- Simplified correlation check
+  -- Item-position timing comparison
+  local source1 = reaper.GetMediaItemTake_Source(take1)
+  local sample_rate = source1 and reaper.GetMediaSourceSampleRate(source1) or 0
+  if not sample_rate or sample_rate <= 0 then
+    sample_rate = 48000
+  end
   local pos1 = reaper.GetMediaItemInfo_Value(item1, "D_POSITION")
   local pos2 = reaper.GetMediaItemInfo_Value(item2, "D_POSITION")
   local time_diff = math.abs(pos1 - pos2)
 
-  reaper.ShowConsoleMsg("Position difference: " .. string.format("%.4fs (%.1f samples @ 48kHz)\n",
-    time_diff, time_diff * 48000))
+  reaper.ShowConsoleMsg("Position difference: " .. string.format("%.4fs (%.1f samples @ %dHz)\n",
+    time_diff, time_diff * sample_rate, sample_rate))
 
   if time_diff < 0.0002 then  -- Less than 0.2ms
     reaper.ShowConsoleMsg("\n✅ EXCELLENT: Item positions are within 0.2ms\n")
@@ -350,8 +382,17 @@ local function showMenu()
   menu = menu .. "Nudge Right 0.1ms (fine)|"
   menu = menu .. "Settings..."
 
-  if gfx.init then gfx.init("", 0, 0, 0, 0, 0) end
-  gfx.x, gfx.y = gfx.mouse_x, gfx.mouse_y
+  local mx, my = gfx.mouse_x or 0, gfx.mouse_y or 0
+  if reaper.GetMousePosition then
+    local rx, ry = reaper.GetMousePosition()
+    if rx and ry then mx, my = rx, ry end
+  end
+  if gfx.init then
+    gfx.init("", 0, 0, 0, mx, my)
+    gfx.x, gfx.y = 0, 0
+  else
+    gfx.x, gfx.y = mx, my
+  end
   local result = gfx.showmenu(menu)
   if gfx.quit then gfx.quit() end
 

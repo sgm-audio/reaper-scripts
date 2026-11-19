@@ -56,7 +56,7 @@ if fail_count > 0 then
   reaper.ShowConsoleMsg("\n❌ FIX THESE ERRORS BEFORE RUNNING:\n\n")
   for _, err_info in ipairs(errors) do
     reaper.ShowConsoleMsg(err_info.script .. ":\n")
-    reaper.ShowConsoleMsg("  " .. err_info.error .. "\n\n")
+    reaper.ShowConsoleMsg("  " .. tostring(err_info.error) .. "\n\n")
   end
 else
   reaper.ShowConsoleMsg("\n✅ ALL SCRIPTS PASSED SYNTAX CHECK (loadfile only; runtime behavior is not verified).\n")
