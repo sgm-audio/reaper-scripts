@@ -2,10 +2,12 @@
 # Comprehensive plugin database and compatibility checker
 # Author: Scott Mills Audio Systems
 
+import contextlib
 import json
 import os
 import platform
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -83,63 +85,61 @@ class PluginDatabase:
     
     def _init_database(self):
         """Initialize SQLite database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Create main plugin table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS plugins (
-                plugin_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                manufacturer TEXT,
-                version TEXT,
-                format TEXT,
-                category TEXT,
-                windows_compatible INTEGER,
-                mac_compatible INTEGER,
-                linux_compatible INTEGER,
-                min_reaper_version TEXT,
-                requires_license INTEGER,
-                is_free INTEGER,
-                cpu_usage TEXT,
-                latency INTEGER,
-                supports_oversampling INTEGER,
-                preset_count INTEGER,
-                midi_learn INTEGER,
-                automation_parameters INTEGER,
-                website TEXT,
-                last_updated TIMESTAMP,
-                notes TEXT
-            )
-        ''')
-        
-        # Create alternatives table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS plugin_alternatives (
-                plugin_id TEXT,
-                alternative_id TEXT,
-                quality_match REAL,
-                notes TEXT,
-                FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id),
-                FOREIGN KEY (alternative_id) REFERENCES plugins(plugin_id),
-                UNIQUE(plugin_id, alternative_id)
-            )
-        ''')
-        
-        # Create presets table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS plugin_presets (
-                preset_id TEXT PRIMARY KEY,
-                plugin_id TEXT,
-                preset_name TEXT,
-                category TEXT,
-                data BLOB,
-                FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id)
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            with conn:
+                cursor = conn.cursor()
+
+                # Create main plugin table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS plugins (
+                        plugin_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        manufacturer TEXT,
+                        version TEXT,
+                        format TEXT,
+                        category TEXT,
+                        windows_compatible INTEGER,
+                        mac_compatible INTEGER,
+                        linux_compatible INTEGER,
+                        min_reaper_version TEXT,
+                        requires_license INTEGER,
+                        is_free INTEGER,
+                        cpu_usage TEXT,
+                        latency INTEGER,
+                        supports_oversampling INTEGER,
+                        preset_count INTEGER,
+                        midi_learn INTEGER,
+                        automation_parameters INTEGER,
+                        website TEXT,
+                        last_updated TIMESTAMP,
+                        notes TEXT
+                    )
+                ''')
+
+                # Create alternatives table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS plugin_alternatives (
+                        plugin_id TEXT,
+                        alternative_id TEXT,
+                        quality_match REAL,
+                        notes TEXT,
+                        FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id),
+                        FOREIGN KEY (alternative_id) REFERENCES plugins(plugin_id),
+                        UNIQUE(plugin_id, alternative_id)
+                    )
+                ''')
+
+                # Create presets table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS plugin_presets (
+                        preset_id TEXT PRIMARY KEY,
+                        plugin_id TEXT,
+                        preset_name TEXT,
+                        category TEXT,
+                        data BLOB,
+                        FOREIGN KEY (plugin_id) REFERENCES plugins(plugin_id)
+                    )
+                ''')
     
     def _populate_core_plugins(self):
         """Populate database with core plugin information"""
@@ -228,81 +228,89 @@ class PluginDatabase:
     
     def add_plugin(self, plugin: PluginInfo) -> bool:
         """Add or update plugin in database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute('''
-                INSERT OR REPLACE INTO plugins VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-            ''', (
-                plugin.plugin_id,
-                plugin.name,
-                plugin.manufacturer,
-                plugin.version,
-                plugin.format.value,
-                plugin.category.value,
-                int(plugin.windows_compatible),
-                int(plugin.mac_compatible),
-                int(plugin.linux_compatible),
-                plugin.min_reaper_version,
-                int(plugin.requires_license),
-                int(plugin.is_free),
-                plugin.cpu_usage,
-                plugin.latency,
-                int(plugin.supports_oversampling),
-                plugin.preset_count,
-                int(plugin.midi_learn),
-                plugin.automation_parameters,
-                plugin.website,
-                plugin.last_updated,
-                plugin.notes
-            ))
-            
-            # Replace the relationship set atomically; repeated initialization
-            # must not accumulate duplicate alternatives in older databases.
-            cursor.execute(
-                "DELETE FROM plugin_alternatives WHERE plugin_id = ?",
-                (plugin.plugin_id,),
-            )
-            for alt in plugin.alternatives:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO plugin_alternatives
-                    VALUES (?, ?, ?, ?)
-                ''', (plugin.plugin_id, alt, 0.8, ""))
-            
-            conn.commit()
+            with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO plugins VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        )
+                    ''', (
+                        plugin.plugin_id,
+                        plugin.name,
+                        plugin.manufacturer,
+                        plugin.version,
+                        plugin.format.value,
+                        plugin.category.value,
+                        int(plugin.windows_compatible),
+                        int(plugin.mac_compatible),
+                        int(plugin.linux_compatible),
+                        plugin.min_reaper_version,
+                        int(plugin.requires_license),
+                        int(plugin.is_free),
+                        plugin.cpu_usage,
+                        plugin.latency,
+                        int(plugin.supports_oversampling),
+                        plugin.preset_count,
+                        int(plugin.midi_learn),
+                        plugin.automation_parameters,
+                        plugin.website,
+                        plugin.last_updated,
+                        plugin.notes
+                    ))
+
+                    # Replace the relationship set atomically; repeated initialization
+                    # must not accumulate duplicate alternatives in older databases.
+                    cursor.execute(
+                        "DELETE FROM plugin_alternatives WHERE plugin_id = ?",
+                        (plugin.plugin_id,),
+                    )
+                    for alt in plugin.alternatives:
+                        if isinstance(alt, dict):
+                            alt_id = alt["alternative_id"]
+                            quality_match = float(alt.get("quality_match", 0.8))
+                            alt_notes = alt.get("notes", "") or ""
+                        else:
+                            alt_id = alt
+                            quality_match = 0.8
+                            alt_notes = ""
+                        cursor.execute('''
+                            INSERT OR IGNORE INTO plugin_alternatives
+                            VALUES (?, ?, ?, ?)
+                        ''', (plugin.plugin_id, alt_id, quality_match, alt_notes))
             return True
             
         except Exception as e:
             print(f"Error adding plugin: {e}")
             return False
-        finally:
-            conn.close()
     
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape SQL LIKE wildcard characters using backslash."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     def find_plugin(self, plugin_name: str) -> Optional[PluginInfo]:
         """Find plugin by name or ID"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Try exact match first
-        cursor.execute('''
-            SELECT * FROM plugins 
-            WHERE plugin_id = ? OR name = ?
-        ''', (plugin_name, plugin_name))
-        
-        result = cursor.fetchone()
-        
-        if not result:
-            # Try fuzzy match
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
+
+            # Try exact match first
             cursor.execute('''
                 SELECT * FROM plugins 
-                WHERE name LIKE ? OR plugin_id LIKE ?
-            ''', (f'%{plugin_name}%', f'%{plugin_name}%'))
+                WHERE plugin_id = ? OR name = ?
+            ''', (plugin_name, plugin_name))
+
             result = cursor.fetchone()
-        
-        conn.close()
+
+            if not result:
+                # Try fuzzy match with escaped LIKE wildcards
+                escaped = f"%{self._escape_like(plugin_name)}%"
+                cursor.execute('''
+                    SELECT * FROM plugins
+                    WHERE name LIKE ? ESCAPE '\\' OR plugin_id LIKE ? ESCAPE '\\'
+                ''', (escaped, escaped))
+                result = cursor.fetchone()
         
         if result:
             return self._row_to_plugin_info(result)
@@ -310,20 +318,27 @@ class PluginDatabase:
     
     def get_alternatives(self, plugin_id: str) -> List[Tuple[str, float]]:
         """Get alternative plugins with quality match score"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT alternative_id, quality_match 
-            FROM plugin_alternatives 
-            WHERE plugin_id = ?
-            ORDER BY quality_match DESC
-        ''', (plugin_id,))
-        
-        alternatives = cursor.fetchall()
-        conn.close()
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT alternative_id, quality_match
+                FROM plugin_alternatives
+                WHERE plugin_id = ?
+                ORDER BY quality_match DESC
+            ''', (plugin_id,))
+
+            alternatives = cursor.fetchall()
         
         return alternatives
+
+    @staticmethod
+    def _parse_timestamp(value) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str) and value.strip():
+            return datetime.fromisoformat(value)
+        return datetime.now()
     
     def _row_to_plugin_info(self, row) -> PluginInfo:
         """Convert database row to PluginInfo object"""
@@ -348,17 +363,13 @@ class PluginDatabase:
             automation_parameters=row[17],
             alternatives=[],  # Loaded separately
             website=row[18],
-            last_updated=(
-                row[19]
-                if isinstance(row[19], datetime)
-                else datetime.fromisoformat(row[19])
-            ),
+            last_updated=self._parse_timestamp(row[19]),
             notes=row[20]
         )
 
     def export_json(self, output_path: str):
         """Export plugin metadata and alternative relationships to JSON."""
-        with sqlite3.connect(self.db_path) as conn:
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             plugins = [dict(row) for row in conn.execute("SELECT * FROM plugins")]
             alternatives = [
@@ -378,10 +389,14 @@ class PluginDatabase:
             data = json.load(source)
         if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
             raise ValueError("Invalid plugin database export")
-        alternatives = {}
+        alternatives: Dict[str, List[dict]] = {}
         for relationship in data.get("alternatives", []):
             alternatives.setdefault(relationship["plugin_id"], []).append(
-                relationship["alternative_id"]
+                {
+                    "alternative_id": relationship["alternative_id"],
+                    "quality_match": float(relationship.get("quality_match", 0.8)),
+                    "notes": relationship.get("notes", "") or "",
+                }
             )
         for row in data["plugins"]:
             plugin = PluginInfo(
@@ -405,7 +420,7 @@ class PluginDatabase:
                 automation_parameters=int(row.get("automation_parameters", 0)),
                 alternatives=alternatives.get(row["plugin_id"], []),
                 website=row.get("website", ""),
-                last_updated=datetime.fromisoformat(row["last_updated"]),
+                last_updated=self._parse_timestamp(row.get("last_updated")),
                 notes=row.get("notes", ""),
             )
             self.add_plugin(plugin)
@@ -427,6 +442,8 @@ class PluginScanner:
                 "C:\\Program Files\\VSTPlugins",
                 "C:\\Program Files\\Steinberg\\VSTPlugins",
                 "C:\\Program Files\\Common Files\\VST3",
+                "C:\\Program Files\\Common Files\\CLAP",
+                "C:\\Program Files\\Common Files\\LV2",
                 "C:\\Program Files (x86)\\VSTPlugins",
                 "C:\\Program Files (x86)\\Steinberg\\VSTPlugins"
             ]
@@ -436,19 +453,32 @@ class PluginScanner:
                 "/Library/Audio/Plug-Ins/VST",
                 "/Library/Audio/Plug-Ins/VST3",
                 "/Library/Audio/Plug-Ins/Components",
+                "/Library/Audio/Plug-Ins/CLAP",
+                "/Library/Audio/Plug-Ins/LV2",
                 f"{home}/Library/Audio/Plug-Ins/VST",
                 f"{home}/Library/Audio/Plug-Ins/VST3",
-                f"{home}/Library/Audio/Plug-Ins/Components"
+                f"{home}/Library/Audio/Plug-Ins/Components",
+                f"{home}/Library/Audio/Plug-Ins/CLAP",
+                f"{home}/Library/Audio/Plug-Ins/LV2"
             ]
         elif self.system == "Linux":
             home = os.path.expanduser("~")
             paths = [
                 "/usr/lib/vst",
+                "/usr/lib/lxvst",
                 "/usr/lib/vst3",
+                "/usr/lib/clap",
+                "/usr/lib/lv2",
                 "/usr/local/lib/vst",
+                "/usr/local/lib/lxvst",
                 "/usr/local/lib/vst3",
+                "/usr/local/lib/clap",
+                "/usr/local/lib/lv2",
                 f"{home}/.vst",
-                f"{home}/.vst3"
+                f"{home}/.lxvst",
+                f"{home}/.vst3",
+                f"{home}/.clap",
+                f"{home}/.lv2"
             ]
         
         # Add installation and per-user REAPER resource paths.
@@ -491,7 +521,8 @@ class PluginScanner:
             'vst2': [], 'vst3': [], 'au': [], 'js': [], 'clap': [], 'lv2': []
         }
         bundle_formats = {
-            '.vst': 'vst2', '.vst3': 'vst3', '.component': 'au', '.lv2': 'lv2'
+            '.vst': 'vst2', '.vst3': 'vst3', '.component': 'au',
+            '.clap': 'clap', '.lv2': 'lv2'
         }
         file_formats = {
             '.dll': 'vst2', '.vst': 'vst2', '.so': 'vst2',
@@ -503,7 +534,7 @@ class PluginScanner:
             if not os.path.isdir(path):
                 continue
             for root, dirs, files in os.walk(path):
-                # VST3/AU/LV2 (and VST2 on macOS) are directories, not files.
+                # VST3/AU/CLAP/LV2 (and VST2 on macOS) can be directory bundles.
                 for dirname in list(dirs):
                     format_name = bundle_formats.get(os.path.splitext(dirname)[1].lower())
                     if format_name:
@@ -515,6 +546,7 @@ class PluginScanner:
                     if format_name:
                         plugins[format_name].append(os.path.join(root, filename))
                     elif (not extension and 'Effects' in Path(path).parts
+                          and not filename.startswith('.')
                           and not filename.endswith('.jsfx-inc')):
                         # Native JSFX files commonly have no extension.
                         plugins['js'].append(os.path.join(root, filename))
@@ -534,7 +566,7 @@ class PluginScanner:
         }
         
         # Try to extract more info based on file type
-        if plugin_path.endswith('.vst3'):
+        if plugin_path.lower().endswith('.vst3'):
             info['format'] = 'VST3'
             # VST3 packages often have metadata we can read
             metadata_path = os.path.join(plugin_path, 'Contents', 'Info.plist')
@@ -546,7 +578,7 @@ class PluginScanner:
                         info['bundle_name'] = plist.get('CFBundleName', '')
                         info['version'] = plist.get('CFBundleVersion', '')
                         info['manufacturer'] = plist.get('CFBundleGetInfoString', '')
-                except:
+                except Exception:
                     pass
         
         return info
@@ -564,7 +596,7 @@ class CompatibilityChecker:
         """Normalize RPP descriptors and filenames for conservative matching."""
         normalized = os.path.basename(name).strip()
         normalized = re.sub(
-            r"^(?:VST3?|VSTi|AU|CLAP|JS):\s*", "", normalized, flags=re.IGNORECASE
+            r"^(?:VST3?i?|CLAPi?|AUi?|LV2i?|DXi?|JS):\s*", "", normalized, flags=re.IGNORECASE
         )
         normalized = os.path.splitext(normalized)[0]
         # RPP display names commonly end with the vendor in parentheses.
@@ -597,7 +629,11 @@ class CompatibilityChecker:
             return report
 
         # Parse template file
-        plugins_used = self._parse_template_plugins(template_path)
+        plugins_used = self._parse_template_plugins(template_path, errors=report['errors'])
+        if report['errors']:
+            report['score'] = 0.0
+            self.compatibility_report = report
+            return report
         report['total_plugins'] = len(plugins_used)
         
         # Scan installed plugins
@@ -651,27 +687,40 @@ class CompatibilityChecker:
         self.compatibility_report = report
         return report
     
-    def _parse_template_plugins(self, template_path: str) -> List[str]:
+    def _parse_template_plugins(
+        self, template_path: str, errors: Optional[List[str]] = None
+    ) -> List[str]:
         """Extract plugin names from REAPER template"""
         plugins = []
         
         try:
-            with open(template_path, 'r', encoding='utf-8') as f:
+            with open(template_path, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             descriptors = re.findall(
-                r'<(?:VST|JS|AU|CLAP)\s+\"([^\"]+)\"', content,
+                r'<(?:VST|JS|AU|CLAP|LV2|DX)\s+"([^"]+)"', content,
                 flags=re.IGNORECASE,
+            )
+            # REAPER commonly writes JSFX entries unquoted: <JS utility/volume ""
+            descriptors.extend(
+                re.findall(
+                    r'<JS\s+([^\s"<>]+)', content,
+                    flags=re.IGNORECASE,
+                )
             )
             for descriptor in descriptors:
                 name = re.sub(
-                    r"^(?:VST3?|VSTi|AU|CLAP|JS):\s*", "", descriptor,
+                    r"^(?:VST3?i?|CLAPi?|AUi?|LV2i?|DXi?|JS):\s*", "", descriptor,
                     flags=re.IGNORECASE,
                 ).strip()
                 name = re.sub(r"\s*\([^()]*\)\s*$", "", name).strip()
                 if name:
                     plugins.append(name)
         except (OSError, UnicodeError) as e:
-            print(f"Error parsing template: {e}")
+            message = f"Error parsing template {template_path}: {e}"
+            if errors is not None:
+                errors.append(message)
+            else:
+                print(message)
 
         return sorted(set(plugins))  # Remove duplicates
 
@@ -768,16 +817,15 @@ class PluginPresetManager:
     
     def export_preset(self, plugin_id: str, preset_name: str) -> Optional[bytes]:
         """Export plugin preset data"""
-        conn = sqlite3.connect(self.db.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT data FROM plugin_presets 
-            WHERE plugin_id = ? AND preset_name = ?
-        ''', (plugin_id, preset_name))
-        
-        result = cursor.fetchone()
-        conn.close()
+        with contextlib.closing(sqlite3.connect(self.db.db_path)) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT data FROM plugin_presets
+                WHERE plugin_id = ? AND preset_name = ?
+            ''', (plugin_id, preset_name))
+
+            result = cursor.fetchone()
         
         return result[0] if result else None
     
@@ -804,7 +852,7 @@ class PluginPresetManager:
         return None
 
 # Command-line interface
-def main():
+def main(argv=None):
     import argparse
     
     parser = argparse.ArgumentParser(description='REAPER Plugin Compatibility Checker')
@@ -825,53 +873,57 @@ def main():
     db_parser.add_argument('--export', help='Export database to JSON')
     db_parser.add_argument('--import', dest='import_file', help='Import from JSON')
     
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     
     if not args.command:
         parser.print_help()
         return 0
 
-    if args.command == 'check':
-        checker = CompatibilityChecker()
-        report = checker.check_template_compatibility(args.template)
+    try:
+        if args.command == 'check':
+            checker = CompatibilityChecker()
+            report = checker.check_template_compatibility(args.template)
 
-        print(checker.generate_compatibility_report())
-        
-        if args.suggest:
-            print("\nSUGGESTED REPLACEMENTS:")
-            replacements = checker.suggest_replacements()
-            for original, replacement in replacements.items():
-                print(f"  {original} → {replacement}")
-        return 1 if report.get('errors') else 0
+            print(checker.generate_compatibility_report())
 
-    elif args.command == 'scan':
-        scanner = PluginScanner()
-        plugins = scanner.scan_plugins()
-        
-        print(f"Found {sum(len(p) for p in plugins.values())} plugins:")
-        for format_type, plugin_list in plugins.items():
-            if plugin_list:
-                print(f"\n{format_type.upper()}: {len(plugin_list)} plugins")
-                for plugin in plugin_list[:5]:  # Show first 5
-                    print(f"  - {os.path.basename(plugin)}")
-                if len(plugin_list) > 5:
-                    print(f"  ... and {len(plugin_list) - 5} more")
-        
-        if args.save:
-            with open(args.save, 'w') as f:
-                json.dump(plugins, f, indent=2)
-            print(f"\nScan results saved to {args.save}")
-    
-    elif args.command == 'db':
-        database = PluginDatabase()
-        if args.export:
-            database.export_json(args.export)
-            print(f"Database exported to {args.export}")
-        elif args.import_file:
-            database.import_json(args.import_file)
-            print(f"Database imported from {args.import_file}")
-        else:
-            db_parser.print_help()
+            if args.suggest:
+                print("\nSUGGESTED REPLACEMENTS:")
+                replacements = checker.suggest_replacements()
+                for original, replacement in replacements.items():
+                    print(f"  {original} → {replacement}")
+            return 1 if report.get('errors') else 0
+
+        elif args.command == 'scan':
+            scanner = PluginScanner()
+            plugins = scanner.scan_plugins()
+
+            print(f"Found {sum(len(p) for p in plugins.values())} plugins:")
+            for format_type, plugin_list in plugins.items():
+                if plugin_list:
+                    print(f"\n{format_type.upper()}: {len(plugin_list)} plugins")
+                    for plugin in plugin_list[:5]:  # Show first 5
+                        print(f"  - {os.path.basename(plugin)}")
+                    if len(plugin_list) > 5:
+                        print(f"  ... and {len(plugin_list) - 5} more")
+
+            if args.save:
+                with open(args.save, 'w', encoding='utf-8') as f:
+                    json.dump(plugins, f, indent=2)
+                print(f"\nScan results saved to {args.save}")
+
+        elif args.command == 'db':
+            database = PluginDatabase()
+            if args.export:
+                database.export_json(args.export)
+                print(f"Database exported to {args.export}")
+            elif args.import_file:
+                database.import_json(args.import_file)
+                print(f"Database imported from {args.import_file}")
+            else:
+                db_parser.print_help()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
     return 0
 

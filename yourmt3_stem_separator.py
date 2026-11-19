@@ -18,7 +18,11 @@ import tempfile
 from typing import Dict, Optional, Sequence
 
 import numpy as np
-import soundfile as sf
+
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
 
 try:
     import torch
@@ -49,13 +53,13 @@ class YourMT3StemSeparator:
         device: Optional[str] = None,
         timeout_seconds: int = 1800,
     ):
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         self.output_dir = os.fspath(output_dir)
         self.model_name = model_name
         self.device = self._select_device(device)
         self.timeout_seconds = timeout_seconds
         os.makedirs(self.output_dir, exist_ok=True)
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
 
     @staticmethod
     def _select_device(device: Optional[str]) -> str:
@@ -71,6 +75,11 @@ class YourMT3StemSeparator:
 
     def _load_audio(self, file_path: str):
         """Load audio as ``(channels, frames)`` float32, duplicating mono."""
+        if sf is None:
+            raise RuntimeError(
+                "Reading audio files requires the 'soundfile' package "
+                "(`python -m pip install soundfile`)."
+            )
         audio, sample_rate = sf.read(file_path, always_2d=True, dtype="float32")
         audio = audio.T
         if audio.shape[0] == 1:
@@ -111,22 +120,27 @@ class YourMT3StemSeparator:
             raise ValueError("Expected audio shaped (channels, frames)")
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
-        if samples.shape[1] == 0:
+        orig_len = samples.shape[1]
+        if orig_len == 0:
             return samples.copy()
         frame_size = 2048
         hop_size = frame_size // 2
         window = np.hanning(frame_size).astype(np.float32)
         frequencies = np.fft.rfftfreq(frame_size, 1.0 / sample_rate)
         high_band = frequencies >= 8000
-        output = np.zeros_like(samples)
-        weights = np.zeros(samples.shape[1], dtype=np.float32)
 
-        for start in range(0, samples.shape[1], hop_size):
-            end = min(start + frame_size, samples.shape[1])
+        # Pad by hop_size on both ends so boundary samples receive full overlap-add weight.
+        padded = np.pad(samples, ((0, 0), (hop_size, hop_size)), mode="edge")
+        padded_len = padded.shape[1]
+        output = np.zeros_like(padded)
+        weights = np.zeros(padded_len, dtype=np.float32)
+
+        for start in range(0, padded_len, hop_size):
+            end = min(start + frame_size, padded_len)
             valid = end - start
-            block = np.zeros((samples.shape[0], frame_size), dtype=np.float32)
-            block[:, :valid] = samples[:, start:end]
-            for channel in range(samples.shape[0]):
+            block = np.zeros((padded.shape[0], frame_size), dtype=np.float32)
+            block[:, :valid] = padded[:, start:end]
+            for channel in range(padded.shape[0]):
                 spectrum = np.fft.rfft(block[channel] * window)
                 magnitudes = np.abs(spectrum)
                 if np.any(high_band):
@@ -141,7 +155,8 @@ class YourMT3StemSeparator:
             weights[start:end] += window[:valid] ** 2
 
         output /= np.maximum(weights, 1e-8)
-        return np.nan_to_num(output, copy=False)
+        cropped = output[:, hop_size : hop_size + orig_len]
+        return np.nan_to_num(cropped, copy=False)
 
     def _preprocess_ai_audio(self, audio, sample_rate: int):
         """Remove DC/rumble and quiet HF artifacts without normalizing quiet mixes."""
@@ -214,6 +229,11 @@ class YourMT3StemSeparator:
         selected = tuple(stems or self.STEMS)
         if not selected or any(stem not in self.STEMS for stem in selected):
             raise ValueError(f"stems must be selected from {', '.join(self.STEMS)}")
+        if sf is None:
+            raise RuntimeError(
+                "Writing separated stems requires the 'soundfile' package "
+                "(`python -m pip install soundfile`)."
+            )
         if not self._demucs_available():
             raise RuntimeError(
                 "Demucs is not installed. Install the ML backend with "
@@ -239,12 +259,13 @@ class YourMT3StemSeparator:
                 details = (completed.stderr or completed.stdout).strip()
                 raise RuntimeError(f"Demucs failed ({completed.returncode}): {details}")
 
-            candidates = list(Path(temp_dir).rglob(f"{input_path.stem}/*.wav"))
+            all_wavs = list(Path(temp_dir).rglob("*.wav"))
+            candidates = [path for path in all_wavs if path.parent.name == input_path.stem]
             result = {}
             for stem in selected:
                 matches = [path for path in candidates if path.stem == stem]
                 if not matches:
-                    matches = list(Path(temp_dir).rglob(f"{stem}.wav"))
+                    matches = [path for path in all_wavs if path.stem == stem]
                 if not matches:
                     raise RuntimeError(f"Demucs did not produce the '{stem}' stem")
                 audio, sample_rate = self._load_audio(str(matches[0]))

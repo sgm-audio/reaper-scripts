@@ -192,16 +192,16 @@ class TestYourMT3StemSeparator(unittest.TestCase):
         """Test device selection logic"""
         mock_cuda.return_value = True
 
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
         self.assertEqual(separator.device, "cuda")
 
         mock_cuda.return_value = False
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
         self.assertEqual(separator.device, "cpu")
 
     def test_audio_loading(self):
         """Test audio file loading"""
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
         test_file = self.create_test_audio("test.wav")
 
         audio, sr = separator._load_audio(test_file)
@@ -212,7 +212,7 @@ class TestYourMT3StemSeparator(unittest.TestCase):
 
     def test_mono_to_stereo_conversion(self):
         """Test mono to stereo conversion"""
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
 
         # Create mono audio
         sample_rate = 44100
@@ -228,13 +228,13 @@ class TestYourMT3StemSeparator(unittest.TestCase):
 
     def test_audio_preprocessing(self):
         """Test AI audio preprocessing"""
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
 
-        # Create test audio
+        # Create test audio shaped (channels, frames)
         sample_rate = 44100
         t = np.linspace(0, 1.0, sample_rate)
         audio = 0.3 * np.sin(2 * np.pi * 440 * t)
-        stereo_audio = np.column_stack([audio, audio])
+        stereo_audio = np.column_stack([audio, audio]).T
 
         processed = separator._preprocess_ai_audio(stereo_audio, sample_rate)
 
@@ -243,7 +243,7 @@ class TestYourMT3StemSeparator(unittest.TestCase):
 
     def test_highpass_filter(self):
         """Test high-pass filter application"""
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
 
         # Create test audio
         audio = np.random.randn(2, 44100) * 0.1
@@ -254,7 +254,7 @@ class TestYourMT3StemSeparator(unittest.TestCase):
 
     def test_spectral_artifact_reduction(self):
         """Test spectral artifact reduction"""
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
 
         # Create test audio
         audio = np.random.randn(2, 44100) * 0.1
@@ -265,7 +265,7 @@ class TestYourMT3StemSeparator(unittest.TestCase):
 
     def test_model_info(self):
         """Test model information retrieval"""
-        separator = self.separator_class()
+        separator = self.separator_class(output_dir=self.test_dir)
         info = separator.get_model_info()
 
         self.assertIsInstance(info, dict)

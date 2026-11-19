@@ -9,6 +9,8 @@ os.execute("mkdir -p '" .. temp_root:gsub("'", "'\\''") .. "'")
 reaper = {
   GetResourcePath = function() return temp_root end,
   GetProjectPath = function() return temp_root end,
+  EnumProjects = function(_) return nil, temp_root .. "/smoke.rpp" end,
+  GetMousePosition = function() return 0, 0 end,
   GetOS = function() return "Linux" end,
   EnumerateFiles = function(_, _) return nil end,
   EnumerateSubdirectories = function(_, _) return nil end,

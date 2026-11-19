@@ -140,9 +140,15 @@ end
 
 -- Load a repo script (runs its top-level code, with UI stubs active).
 function T.load_script(name)
-  local chunk, err = loadfile(REPO .. "/" .. name)
+  local path = REPO .. "/" .. name
+  local chunk, err = loadfile(path)
   if not chunk then error("loadfile " .. name .. ": " .. tostring(err), 0) end
-  return chunk()
+  local real_ctx = reaper.get_action_context
+  reaper.get_action_context = function() return true, path, 0, 0, 0, 0, 0 end
+  local ok, res = xpcall(chunk, debug.traceback)
+  reaper.get_action_context = real_ctx
+  if not ok then error(res, 0) end
+  return res
 end
 
 -- ---------------------------------------------------------------- runner

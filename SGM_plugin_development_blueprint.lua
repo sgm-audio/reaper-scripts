@@ -54,8 +54,23 @@ local function show_plugin_development_guide()
   message("After generation, follow README.md in the destination directory.")
 end
 
+local function get_saved_project_dir()
+  if reaper.EnumProjects then
+    local _, proj_fn = reaper.EnumProjects(-1)
+    if type(proj_fn) == "string" and proj_fn ~= "" then
+      local dir = proj_fn:match("^(.*)[/\\][^/\\]+$")
+      if dir and dir ~= "" then
+        return dir
+      end
+    else
+      return ""
+    end
+  end
+  return reaper.GetProjectPath("") or ""
+end
+
 local function create_development_project()
-  local parent_path = reaper.GetProjectPath()
+  local parent_path = get_saved_project_dir()
   if parent_path == nil or parent_path == "" then
     reaper.ShowMessageBox(
       "Save the REAPER project before generating the JUCE project.",

@@ -4,7 +4,7 @@
 -- @version 1.0
 -- Acts as bridge between REAPER and external AI processing plugins
 
-function msg(m)
+local function msg(m)
     reaper.ShowConsoleMsg(tostring(m) .. "\n")
 end
 
@@ -22,6 +22,21 @@ local function name_has_any(name, terms)
     return false
 end
 
+local function get_saved_project_dir()
+    if reaper.EnumProjects then
+        local _, proj_fn = reaper.EnumProjects(-1)
+        if type(proj_fn) == "string" and proj_fn ~= "" then
+            local dir = proj_fn:match("^(.*)[/\\][^/\\]+$")
+            if dir and dir ~= "" then
+                return dir
+            end
+        else
+            return ""
+        end
+    end
+    return reaper.GetProjectPath("") or ""
+end
+
 -- AI Plugin Bridge System
 local AIPluginBridge = {}
 AIPluginBridge.__index = AIPluginBridge
@@ -36,7 +51,9 @@ function AIPluginBridge:new()
         VST3 = "VST3",
         CLAP = "CLAP", 
         VST2 = "VST2",
-        AU = "AU"  -- macOS only
+        AU = "AU",  -- macOS only
+        LV2 = "LV2",
+        JSFX = "JSFX"
     }
     
     return bridge
@@ -53,12 +70,17 @@ function AIPluginBridge:discover_ai_plugins()
         "Stem", "Separate", "Mastering", "Analysis"
     }
     
-    local plugin_count = reaper.TrackFX_GetCount(reaper.GetMasterTrack(0))
+    local master_track = reaper.GetMasterTrack(0)
+    if not master_track then
+        msg("Master track unavailable")
+        return self.discovered_plugins
+    end
+    local plugin_count = reaper.TrackFX_GetCount(master_track)
     
     for i = 0, plugin_count - 1 do
-        local retval, name = reaper.TrackFX_GetFXName(reaper.GetMasterTrack(0), i, "")
-        if retval then
-            for j, pattern in ipairs(ai_plugin_patterns) do
+        local retval, name = reaper.TrackFX_GetFXName(master_track, i, "")
+        if retval and name then
+            for _, pattern in ipairs(ai_plugin_patterns) do
                 if name_has(name, pattern) then
                     local plugin_info = {
                         index = i,
@@ -82,8 +104,12 @@ end
 
 function AIPluginBridge:_detect_plugin_type(fx_index)
     -- REAPER reports FX names with a format prefix ("VST3: ", "VST: ", "CLAP: ", "JS: ", ...),
-    -- not a file extension, so classify on that prefix.
-    local retval, fx_name = reaper.TrackFX_GetFXName(reaper.GetMasterTrack(0), fx_index, "")
+    -- not a file extension, so classify on that prefix first, then fall back to extension.
+    local master_track = reaper.GetMasterTrack(0)
+    if not master_track then
+        return "Unknown"
+    end
+    local retval, fx_name = reaper.TrackFX_GetFXName(master_track, fx_index, "")
     if not retval or not fx_name then
         return "Unknown"
     end
@@ -95,14 +121,21 @@ function AIPluginBridge:_detect_plugin_type(fx_index)
         if by_prefix[base] then return by_prefix[base] end
     end
     local lower_name = fx_name:lower()
-    if lower_name:find(".vst3", 1, true) then
+    if lower_name:match("^vst3i?:") or lower_name:find(".vst3", 1, true) then
         return "VST3"
-    elseif lower_name:find(".vst", 1, true) then
+    elseif lower_name:match("^vsti?:") or lower_name:find(".vst", 1, true) then
         return "VST2"
-    elseif lower_name:find(".clap", 1, true) then
+    elseif lower_name:match("^clapi?:") or lower_name:find(".clap", 1, true) then
         return "CLAP"
+    elseif lower_name:match("^aui?:") or lower_name:find(".component", 1, true) then
+        return "AU"
+    elseif lower_name:match("^lv2i?:") or lower_name:find(".lv2", 1, true) then
+        return "LV2"
+    elseif lower_name:match("^js:") then
+        return "JSFX"
+    else
+        return "Unknown"
     end
-    return "Unknown"
 end
 
 function AIPluginBridge:_categorize_plugin(plugin_name)
@@ -181,6 +214,15 @@ local function json_string(value)
     return '"' .. escaped .. '"'
 end
 
+local function json_value(value)
+    if type(value) == "number" then
+        return tostring(value)
+    elseif type(value) == "boolean" then
+        return value and "true" or "false"
+    end
+    return json_string(value)
+end
+
 function AIPluginBridge:create_ai_routing_template()
     msg("Creating AI routing template...")
     
@@ -235,7 +277,7 @@ function AIPluginBridge:create_ai_routing_template()
                 for key in pairs(track) do table.insert(keys, key) end
                 table.sort(keys)
                 for k_idx, key in ipairs(keys) do
-                    file:write('          ' .. json_string(key) .. ': ' .. json_string(track[key]))
+                    file:write('          ' .. json_string(key) .. ': ' .. json_value(track[key]))
                     if k_idx < #keys then
                         file:write(",\n")
                     else
@@ -287,14 +329,14 @@ end
 
 function ExternalToolLauncher:_get_tool_paths()
     local paths = {}
-    local os_type = reaper.GetOS()
+    local os_type = reaper.GetOS() or ""
     if os_type == "Win32" or os_type == "Win64" then
         local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
         local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
         table.insert(paths, prog_files .. "\\AudioMovers\\OmniBridge")
         table.insert(paths, common_files .. "\\VST3\\AI")
         table.insert(paths, prog_files .. "\\ReWire")
-    elseif os_type:match("^OSX") then
+    elseif os_type:match("^OSX") or os_type:match("^macOS") then
         local home = os.getenv("HOME") or ""
         table.insert(paths, "/Applications/AudioMovers/OmniBridge.app")
         if home ~= "" then
@@ -324,16 +366,19 @@ function ExternalToolLauncher:launch_external_processing(track_indices, tool_typ
     local tracks_to_process = {}
     
     if track_indices and #track_indices > 0 then
-        for i, index in ipairs(track_indices) do
+        for _, index in ipairs(track_indices) do
             local track = reaper.GetTrack(0, index)
             if track then
-                table.insert(tracks_to_process, track)
+                table.insert(tracks_to_process, {track = track, index = index + 1})
             end
         end
     else
         -- Use selected tracks
         for i = 0, reaper.CountSelectedTracks(0) - 1 do
-            table.insert(tracks_to_process, reaper.GetSelectedTrack(0, i))
+            local track = reaper.GetSelectedTrack(0, i)
+            if track then
+                table.insert(tracks_to_process, {track = track, index = i + 1})
+            end
         end
     end
     
@@ -344,41 +389,41 @@ function ExternalToolLauncher:launch_external_processing(track_indices, tool_typ
 
     -- REAPER's Lua API has no portable one-call stem renderer. Print exact
     -- manual render targets instead of claiming that files were exported.
-    local project_path = reaper.GetProjectPath()
+    local project_path = get_saved_project_dir()
     if project_path == "" then
         msg("Save the project before choosing an external export directory.")
         return {}
     end
     local export_dir = project_path .. "/external_ai_export"
-    reaper.RecursiveCreateDirectory(export_dir, 0)
     local exported_files = {}
 
-    for i, track in ipairs(tracks_to_process) do
-        local _, track_name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
-        self:_export_track_stems(track, track_name, export_dir)
+    for _, entry in ipairs(tracks_to_process) do
+        local _, track_name = reaper.GetSetMediaTrackInfo_String(entry.track, "P_NAME", "", false)
+        self:_export_track_stems(entry.track, track_name, export_dir, entry.index)
     end
 
-    local tool_config = self:_get_tool_config(tool_type)
-    self:_execute_external_tool(tool_config, exported_files)
+    local tool_config = self:_get_tool_config(tool_type, project_path)
+    self:_execute_external_tool(tool_config, exported_files, export_dir)
     return exported_files
 end
 
-function ExternalToolLauncher:_export_track_stems(track, track_name, export_dir)
+function ExternalToolLauncher:_export_track_stems(track, track_name, export_dir, track_index)
     -- This helper reports a manual render target; it does not create audio.
     
     local safe_name = (track_name ~= "" and track_name or "Unnamed Track"):gsub('[/\\:*?"<>|]', "_")
-    local export_file = export_dir .. "/" .. safe_name .. "_export.wav"
+    local prefix = track_index and string.format("%02d_", track_index) or ""
+    local export_file = export_dir .. "/" .. prefix .. safe_name .. "_export.wav"
     msg("  Manual render target: " .. safe_name .. " -> " .. export_file)
     msg("    Render this track as a stem before running the external command.")
     return nil
 end
 
-function ExternalToolLauncher:_get_tool_config(tool_type)
+function ExternalToolLauncher:_get_tool_config(tool_type, project_path)
     local configs = {
         stem_separation = {
             executable = "python",
             args = "-m demucs",
-            working_dir = reaper.GetProjectPath(),
+            working_dir = project_path or get_saved_project_dir(),
             name = "Demucs Stem Separator"
         },
         mastering = {
@@ -398,7 +443,7 @@ function ExternalToolLauncher:_get_tool_config(tool_type)
     return configs[tool_type] or configs.stem_separation
 end
 
-function ExternalToolLauncher:_execute_external_tool(tool_config, files)
+function ExternalToolLauncher:_execute_external_tool(tool_config, files, export_dir)
     msg("Launching external tool: " .. tool_config.name)
     msg("  Executable: " .. tool_config.executable)
     msg("  Arguments: " .. tool_config.args)
@@ -407,9 +452,10 @@ function ExternalToolLauncher:_execute_external_tool(tool_config, files)
 
     -- External execution is intentionally manual so arguments and media can be reviewed.
     -- For now, just provide instructions
+    local target_dir = export_dir or (get_saved_project_dir() .. "/external_ai_export")
     msg("\nTo complete processing:")
     msg("1. Run: " .. tool_config.executable .. " " .. tool_config.args)
-    msg("2. Process exported files in: " .. reaper.GetProjectPath() .. "/external_ai_export")
+    msg("2. Process exported files in: " .. target_dir)
     msg("3. Import processed results back into REAPER")
 end
 

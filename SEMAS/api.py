@@ -13,16 +13,18 @@ class SEMASAPI:
     def submit(self, input_file, operations=None, process=False):
         job = SEMASJob(
             input_file=str(input_file),
-            operations=list(operations or ["analyze"]),
+            operations=["analyze"] if operations is None else list(operations),
         )
         self.orchestrator.submit_job(job, auto_process=not process)
         if process:
             self.orchestrator.process_job(job.id)
-        return job.to_dict()
+        with self.orchestrator._lock:
+            return job.to_dict()
 
     def status(self, job_id):
-        job = self.orchestrator.get_job(job_id)
-        return job.to_dict() if job else None
+        with self.orchestrator._lock:
+            job = self.orchestrator.get_job(job_id)
+            return job.to_dict() if job else None
 
     def shutdown(self):
         self.orchestrator.shutdown()

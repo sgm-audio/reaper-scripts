@@ -181,8 +181,10 @@ end
 function SessionImplementationEngine:findTrackByName(name)
   for index = reaper.CountTracks(0) - 1, 0, -1 do
     local media_track = reaper.GetTrack(0, index)
-    local _, track_name = reaper.GetTrackName(media_track)
-    if track_name == name then return media_track end
+    if media_track then
+      local _, track_name = reaper.GetTrackName(media_track)
+      if track_name == name then return media_track end
+    end
   end
   return nil
 end

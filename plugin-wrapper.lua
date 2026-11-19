@@ -6,60 +6,66 @@
 -- Version 1.0
 
 local PLUGIN_DB_FILE = reaper.GetResourcePath() .. "/plugin_database.json"
-local SCAN_PATHS
 
 -- Platform-specific plugin paths
-if reaper.GetOS() == "Win32" or reaper.GetOS() == "Win64" then
-  local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
-  local prog_files_x86 = os.getenv("ProgramFiles(x86)") or "C:\\Program Files (x86)"
-  local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
-  SCAN_PATHS = {
-    prog_files .. "\\VSTPlugins",
-    prog_files .. "\\Steinberg\\VSTPlugins",
-    common_files .. "\\VST3",
-    common_files .. "\\CLAP",
-    prog_files_x86 .. "\\VSTPlugins"
-  }
-elseif reaper.GetOS():match("^OSX") then
-  SCAN_PATHS = {
-    "/Library/Audio/Plug-Ins/VST",
-    "/Library/Audio/Plug-Ins/VST3",
-    "/Library/Audio/Plug-Ins/Components",
-    "/Library/Audio/Plug-Ins/CLAP",
-    "/Library/Audio/Plug-Ins/LV2"
-  }
-  -- Per-user paths only exist when HOME is set
-  local home = os.getenv("HOME")
-  if home then
-    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST")
-    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/VST3")
-    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/Components")
-    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/CLAP")
-    table.insert(SCAN_PATHS, home .. "/Library/Audio/Plug-Ins/LV2")
+local function getScanPaths()
+  local os_type = reaper.GetOS() or ""
+  local paths
+  if os_type == "Win32" or os_type == "Win64" then
+    local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
+    local prog_files_x86 = os.getenv("ProgramFiles(x86)") or "C:\\Program Files (x86)"
+    local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
+    paths = {
+      prog_files .. "\\VSTPlugins",
+      prog_files .. "\\Steinberg\\VSTPlugins",
+      common_files .. "\\VST3",
+      common_files .. "\\CLAP",
+      prog_files_x86 .. "\\VSTPlugins"
+    }
+  elseif os_type:match("^OSX") or os_type:match("^macOS") then
+    paths = {
+      "/Library/Audio/Plug-Ins/VST",
+      "/Library/Audio/Plug-Ins/VST3",
+      "/Library/Audio/Plug-Ins/Components",
+      "/Library/Audio/Plug-Ins/CLAP",
+      "/Library/Audio/Plug-Ins/LV2"
+    }
+    -- Per-user paths only exist when HOME is set
+    local home = os.getenv("HOME")
+    if home then
+      table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST")
+      table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST3")
+      table.insert(paths, home .. "/Library/Audio/Plug-Ins/Components")
+      table.insert(paths, home .. "/Library/Audio/Plug-Ins/CLAP")
+      table.insert(paths, home .. "/Library/Audio/Plug-Ins/LV2")
+    end
+  else
+    -- Linux
+    paths = {
+      "/usr/lib/vst",
+      "/usr/lib/lxvst",
+      "/usr/lib/vst3",
+      "/usr/local/lib/vst",
+      "/usr/local/lib/lxvst",
+      "/usr/local/lib/vst3",
+      "/usr/lib/clap",
+      "/usr/lib/lv2",
+      "/usr/local/lib/clap",
+      "/usr/local/lib/lv2"
+    }
+    local home = os.getenv("HOME")
+    if home then
+      table.insert(paths, home .. "/.vst")
+      table.insert(paths, home .. "/.vst3")
+      table.insert(paths, home .. "/.lxvst")
+      table.insert(paths, home .. "/.clap")
+      table.insert(paths, home .. "/.lv2")
+    end
   end
-else
-  -- Linux
-  SCAN_PATHS = {
-    "/usr/lib/vst",
-    "/usr/lib/lxvst",
-    "/usr/lib/vst3",
-    "/usr/local/lib/vst",
-    "/usr/local/lib/lxvst",
-    "/usr/local/lib/vst3",
-    "/usr/lib/clap",
-    "/usr/lib/lv2",
-    "/usr/local/lib/clap",
-    "/usr/local/lib/lv2"
-  }
-  local home = os.getenv("HOME")
-  if home then
-    table.insert(SCAN_PATHS, home .. "/.vst")
-    table.insert(SCAN_PATHS, home .. "/.vst3")
-    table.insert(SCAN_PATHS, home .. "/.lxvst")
-    table.insert(SCAN_PATHS, home .. "/.clap")
-    table.insert(SCAN_PATHS, home .. "/.lv2")
-  end
+  return paths
 end
+
+local SCAN_PATHS = getScanPaths()
 
 -- ===================================
 -- PLUGIN DATABASE
@@ -76,7 +82,45 @@ end
 
 local function json_unescape(value)
   local escapes = {['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t"}
-  return (value:gsub("\\(.)", function(char) return escapes[char] or char end))
+  local out = {}
+  local pos = 1
+  local len = #value
+  while pos <= len do
+    local bs = value:find("\\", pos, true)
+    if not bs then
+      table.insert(out, value:sub(pos))
+      break
+    end
+    if bs > pos then
+      table.insert(out, value:sub(pos, bs - 1))
+    end
+    if bs == len then
+      table.insert(out, "\\")
+      break
+    end
+    local next_char = value:sub(bs + 1, bs + 1)
+    if next_char == "u" then
+      local hex = value:sub(bs + 2, bs + 5)
+      if hex:match("^%x%x%x%x$") then
+        local cp = tonumber(hex, 16)
+        if cp <= 0x7F then
+          table.insert(out, string.char(cp))
+        elseif utf8 and utf8.char then
+          table.insert(out, utf8.char(cp))
+        else
+          table.insert(out, "\\u" .. hex)
+        end
+        pos = bs + 6
+      else
+        table.insert(out, "u")
+        pos = bs + 2
+      end
+    else
+      table.insert(out, escapes[next_char] or next_char)
+      pos = bs + 2
+    end
+  end
+  return table.concat(out)
 end
 
 local PluginDB = {}
@@ -202,6 +246,7 @@ function PluginScanner:scanDirectory(path)
   -- Enumerating a missing directory simply returns no files in REAPER.
   -- Recursively scan directory
   local files = self:getFilesInDirectory(path)
+  self.total_files = self.total_files + #files
 
   for _, file in ipairs(files) do
     local plugin_info = self:analyzePlugin(file)
@@ -216,11 +261,13 @@ function PluginScanner:scanDirectory(path)
   return plugins_found
 end
 
-function PluginScanner:getFilesInDirectory(path)
+function PluginScanner:getFilesInDirectory(path, depth)
+  depth = depth or 0
+  if depth > 16 then return {} end
   local files = {}
-  local formats = {[".dll"] = true, [".vst"] = true, [".vst3"] = true,
+  local formats = {[".dll"] = true, [".so"] = true, [".vst"] = true, [".vst3"] = true,
     [".component"] = true, [".clap"] = true, [".lv2"] = true}
-  local bundles = {[".vst"] = true, [".vst3"] = true, [".component"] = true, [".lv2"] = true}
+  local bundles = {[".vst"] = true, [".vst3"] = true, [".component"] = true, [".clap"] = true, [".lv2"] = true}
 
   local i = 0
   while true do
@@ -240,7 +287,7 @@ function PluginScanner:getFilesInDirectory(path)
     if ext and bundles[ext] then
       table.insert(files, full_path)
     else
-      for _, file in ipairs(self:getFilesInDirectory(full_path)) do table.insert(files, file) end
+      for _, file in ipairs(self:getFilesInDirectory(full_path, depth + 1)) do table.insert(files, file) end
     end
     i = i + 1
   end
@@ -248,11 +295,13 @@ function PluginScanner:getFilesInDirectory(path)
 end
 
 function PluginScanner:analyzePlugin(file_path)
+  if type(file_path) ~= "string" then return nil end
   local filename = file_path:match("([^/\\]+)$")
+  if not filename then return nil end
   local ext = (filename:match("%.([^%.]+)$") or ""):lower()
 
   local format = "Unknown"
-  if ext == "dll" or ext == "vst" then
+  if ext == "dll" or ext == "vst" or ext == "so" then
     format = "VST2"
   elseif ext == "vst3" then
     format = "VST3"
@@ -264,8 +313,8 @@ function PluginScanner:analyzePlugin(file_path)
     format = "LV2"
   end
 
-  -- Extract plugin name (remove extension and common prefixes)
-  -- Strip only the final extension: "Plugin v2.5.vst3" is "Plugin v2.5", not "Plugin v2".
+  -- Extract plugin name (remove only the final extension and common prefixes)
+  -- "Plugin v2.5.vst3" -> "Plugin v2.5", not "Plugin v2".
   local name = filename:match("^(.*)%.[^%.]+$") or filename
   name = name:gsub("^VST_", ""):gsub("^AU_", "")
 
@@ -313,7 +362,7 @@ function PluginScanner:categorizePlugin(name)
 
   local name_lower = name:lower()
   for _, cat in ipairs(categories) do
-    if name_lower:find(cat.pattern) then
+    if name_lower:find(cat.pattern, 1, true) then
       return cat.category
     end
   end
@@ -434,8 +483,8 @@ function PluginInstance:cacheAllParams()
 end
 
 function PluginInstance:printInfo()
-  reaper.ShowConsoleMsg("Plugin: " .. self:getName() .. "\n")
-  reaper.ShowConsoleMsg("Parameters: " .. self:getParamCount() .. "\n")
+  reaper.ShowConsoleMsg("Plugin: " .. tostring(self:getName() or "") .. "\n")
+  reaper.ShowConsoleMsg("Parameters: " .. tostring(self:getParamCount()) .. "\n")
   reaper.ShowConsoleMsg("Enabled: " .. tostring(self:isEnabled()) .. "\n")
 end
 
@@ -512,12 +561,12 @@ end
 -- MAIN FUNCTIONS
 -- ===================================
 
-function scanAllPlugins()
+local function scanAllPlugins()
   local scanner = PluginScanner:new()
   scanner:performFullScan()
 end
 
-function listAllPluginsOnTrack()
+local function listAllPluginsOnTrack()
   local track = reaper.GetSelectedTrack(0, 0)
   if not track then
     reaper.ShowMessageBox("No track selected", "Error", 0)
@@ -536,13 +585,15 @@ function listAllPluginsOnTrack()
   end
 end
 
-function automateSelectedPlugin()
+local function automateSelectedPlugin()
   local touched, track_number, fx_index, param_index = reaper.GetLastTouchedFX()
   if not touched or fx_index < 0 or param_index < 0 then
     reaper.ShowMessageBox("No plugin parameter touched", "Error", 0)
     return false
   end
-  if (fx_index & 0x1000000) ~= 0 or (fx_index & 0x2000000) ~= 0 then
+  -- In REAPER, Take FX sets high 16 bits of track_number ((track_number >> 16) ~= 0),
+  -- record-input FX sets bit 0x1000000 on fx_index, while 0x2000000 is REAPER 7 FX Containers.
+  if (track_number >> 16) ~= 0 or (fx_index & 0x1000000) ~= 0 then
     reaper.ShowMessageBox(
       "Record-input FX and take FX are not supported for track FX envelope automation.",
       "Unsupported FX Type", 0)
@@ -566,11 +617,19 @@ function automateSelectedPlugin()
     return false
   end
 
+  local min_val, max_val = 0.0, 1.0
+  if reaper.TrackFX_GetParam then
+    local _, p_min, p_max = reaper.TrackFX_GetParam(track, fx_index, param_index)
+    if type(p_min) == "number" and type(p_max) == "number" and p_min ~= p_max then
+      min_val, max_val = p_min, p_max
+    end
+  end
+
   local automation = PluginAutomation:new(plugin)
   reaper.Undo_BeginBlock()
   reaper.PreventUIRefresh(1)
   local call_ok, sweep_ok = pcall(function()
-    return automation:createSweep(param_index, 0.0, 1.0, 4.0, "exponential")
+    return automation:createSweep(param_index, min_val, max_val, 4.0, "exponential")
   end)
   reaper.PreventUIRefresh(-1)
   reaper.Undo_EndBlock("SGM: Automate FX Parameter", -1)
@@ -590,7 +649,7 @@ end
 -- MENU
 -- ===================================
 
-function showMenu()
+local function showMenu()
   local menu = ""
   menu = menu .. "Scan All Plugins|"
   menu = menu .. "List Plugins on Selected Track|"
@@ -625,6 +684,7 @@ _G.SGMPluginWrapper = {
   PluginInstance = PluginInstance,
   PluginAutomation = PluginAutomation,
   automateSelectedPlugin = automateSelectedPlugin,
+  getScanPaths = getScanPaths,
 }
 
 -- Run

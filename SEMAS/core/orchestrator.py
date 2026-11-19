@@ -61,12 +61,23 @@ class SEMASOrchestrator:
                 try:
                     info = sf.info(str(source))
                     if info.samplerate > 0:
+                        subtype = (info.subtype or "").upper()
+                        if "DOUBLE" in subtype or "64" in subtype:
+                            sample_width_bytes = 8
+                        elif "FLOAT" in subtype or "32" in subtype:
+                            sample_width_bytes = 4
+                        elif "24" in subtype:
+                            sample_width_bytes = 3
+                        elif "08" in subtype or "PCM_U8" in subtype or "PCM_S8" in subtype:
+                            sample_width_bytes = 1
+                        else:
+                            sample_width_bytes = 2
                         return {
                             "input_file": str(source),
                             "operations": list(job.operations),
                             "sample_rate": info.samplerate,
                             "channels": info.channels,
-                            "sample_width_bytes": 4 if "FLOAT" in (info.subtype or "") or "32" in (info.subtype or "") else 2,
+                            "sample_width_bytes": sample_width_bytes,
                             "frames": info.frames,
                             "duration_seconds": info.frames / info.samplerate,
                         }
@@ -84,9 +95,8 @@ class SEMASOrchestrator:
                 raise ValueError(f"Duplicate job id: {job.id}")
             job.status = JobStatus.PENDING
             self.jobs[job.id] = job
-            executor = self._executor if auto_process else None
-        if executor is not None:
-            executor.submit(self.process_job, job.id)
+            if auto_process and self._executor is not None:
+                self._executor.submit(self.process_job, job.id)
         return job.id
 
     def get_job(self, job_id: str) -> Optional[SEMASJob]:
@@ -102,6 +112,12 @@ class SEMASOrchestrator:
             job = self.jobs.get(job_id)
             if job is None:
                 raise KeyError(f"Unknown SEMAS job: {job_id}")
+            if job.status in (
+                JobStatus.RUNNING,
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+            ):
+                return job
             job.status = JobStatus.RUNNING
         try:
             results = dict(self.processor(job) or {})

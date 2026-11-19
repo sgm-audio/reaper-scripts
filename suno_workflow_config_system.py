@@ -226,19 +226,21 @@ def get_config_from_env() -> WorkflowConfig:
     config = WorkflowConfig()
 
     # Override with environment variables if present
-    if os.getenv("SUNO_OUTPUT_DIR"):
-        config.paths.output_dir = os.getenv("SUNO_OUTPUT_DIR")
+    output_dir = os.getenv("SUNO_OUTPUT_DIR")
+    if output_dir and output_dir.strip():
+        config.paths.output_dir = output_dir.strip()
 
-    if os.getenv("SUNO_DEVICE"):
-        config.models.device = DeviceType(os.getenv("SUNO_DEVICE"))
+    device = os.getenv("SUNO_DEVICE")
+    if device and device.strip():
+        config.models.device = DeviceType(device.strip().lower())
 
-    if os.getenv("SUNO_SAMPLE_RATE"):
-        config.audio.sample_rate = int(os.getenv("SUNO_SAMPLE_RATE"))
+    sample_rate = os.getenv("SUNO_SAMPLE_RATE")
+    if sample_rate and sample_rate.strip():
+        config.audio.sample_rate = int(sample_rate.strip())
 
-    if os.getenv("SUNO_ENHANCEMENT_PROFILE"):
-        config.enhancement_profile = EnhancementProfile(
-            os.getenv("SUNO_ENHANCEMENT_PROFILE")
-        )
+    profile = os.getenv("SUNO_ENHANCEMENT_PROFILE")
+    if profile and profile.strip():
+        config.enhancement_profile = EnhancementProfile(profile.strip().lower())
 
     return config
 
@@ -272,7 +274,17 @@ def validate_config(config: WorkflowConfig) -> List[str]:
         issues.append("Overlap ratio must be in the range [0, 1)")
 
     # Check model settings
-    if config.models.demucs_model not in ["htdemucs", "mdx", "mdx_extra", "mdx_q"]:
+    allowed_models = {
+        "htdemucs",
+        "htdemucs_ft",
+        "htdemucs_6s",
+        "hdemucs_mmi",
+        "mdx",
+        "mdx_extra",
+        "mdx_q",
+        "mdx_extra_q",
+    }
+    if config.models.demucs_model not in allowed_models:
         issues.append(f"Unknown demucs model: {config.models.demucs_model}")
 
     return issues

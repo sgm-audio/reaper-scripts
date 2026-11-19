@@ -429,57 +429,82 @@ local function getChainForTrack(track_name)
   if type(track_name) ~= "string" or track_name == "" then
     return nil
   end
-  -- Match track name to plugin chain configuration
+  -- Match track name to plugin chain configuration (case-insensitive)
+  local lower = track_name:lower()
 
   -- Drums
-  if track_name:find("Kick In") then
+  if lower:find("kick in", 1, true) then
     return PLUGIN_CHAINS.drums.kick_in
-  elseif track_name:find("Kick Out") then
+  elseif lower:find("kick out", 1, true) then
     return PLUGIN_CHAINS.drums.kick_out
-  elseif track_name:find("Kick Sub") then
+  elseif lower:find("kick sub", 1, true) then
     return PLUGIN_CHAINS.drums.kick_sub
-  elseif track_name:find("Snare Top") then
+  elseif lower:find("snare top", 1, true) then
     return PLUGIN_CHAINS.drums.snare_top
-  elseif track_name:find("Snare Bottom") then
+  elseif lower:find("snare bottom", 1, true) then
     return PLUGIN_CHAINS.drums.snare_bottom
-  elseif track_name:find("Glitch Snare") then
+  elseif lower:find("glitch snare", 1, true) then
     return PLUGIN_CHAINS.drums.glitch_snare
-  elseif track_name:match("%f[%a][Tt]oms?%f[%A]") then
+  elseif lower:match("%f[%a]toms?%f[%A]") then
     return PLUGIN_CHAINS.drums.toms
-  elseif track_name:find("OH") or track_name:find("Overhead") then
+  elseif lower:match("%f[%a]oh%f[%A]") or lower:find("overhead", 1, true) then
     return PLUGIN_CHAINS.drums.overheads
-  elseif track_name:find("Room Mono") then
+  elseif lower:find("room mono", 1, true) then
     return PLUGIN_CHAINS.drums.room_mono
 
   -- Bass
-  elseif track_name:find("Bass DI") then
+  elseif lower:find("bass di", 1, true) then
     return PLUGIN_CHAINS.bass.bass_di
-  elseif track_name:find("Bass Amp") then
+  elseif lower:find("bass amp", 1, true) then
     return PLUGIN_CHAINS.bass.bass_amp
-  elseif track_name:find("Bass Fuzz") then
+  elseif lower:find("bass fuzz", 1, true) then
     return PLUGIN_CHAINS.bass.bass_fuzz
-  elseif track_name:find("Bass Synth") then
+  elseif lower:find("bass synth", 1, true) then
     return PLUGIN_CHAINS.bass.bass_synth
 
   -- Guitars
-  elseif track_name:find("Rhythm L1") or track_name:find("Rhythm R1") then
+  elseif lower:find("rhythm l1", 1, true) or lower:find("rhythm r1", 1, true) then
     return PLUGIN_CHAINS.guitars.rhythm_main
-  elseif track_name:find("Rhythm L2") or track_name:find("Rhythm R2") then
+  elseif lower:find("rhythm l2", 1, true) or lower:find("rhythm r2", 1, true) then
     return PLUGIN_CHAINS.guitars.rhythm_secondary
-  elseif track_name:find("Octave Lead") then
+  elseif lower:find("octave lead", 1, true) then
     return PLUGIN_CHAINS.guitars.texture_leads
-  elseif track_name:find("Scrape") then
+  elseif lower:find("talking", 1, true) or lower:find("texture guitar", 1, true) then
+    return PLUGIN_CHAINS.guitars.texture_talking
+  elseif lower:find("scrape", 1, true) then
     return PLUGIN_CHAINS.guitars.scrape
 
-  -- Vocals
-  elseif track_name:find("Lead Vocal") then
+  -- Industrial Glitch & Atmosphere
+  elseif lower:find("data stream", 1, true) then
+    return PLUGIN_CHAINS.glitch.data_stream
+  elseif lower:find("impact", 1, true) or lower:find("boom", 1, true) then
+    return PLUGIN_CHAINS.glitch.impacts
+  elseif lower:find("riser", 1, true) or lower:find("white noise", 1, true) then
+    return PLUGIN_CHAINS.glitch.risers
+  elseif lower:find("glitch", 1, true) then
+    return PLUGIN_CHAINS.glitch.glitch_master
+
+  -- Vocals (check hard-tuned before lead vocal)
+  elseif lower:find("hard-tuned", 1, true) or lower:find("hard tuned", 1, true) then
+    return PLUGIN_CHAINS.vocals.lead_tuned
+  elseif lower:find("lead vocal", 1, true) then
     return PLUGIN_CHAINS.vocals.lead_core
-  elseif track_name:find("Demon Layer") then
+  elseif lower:find("demon layer", 1, true) then
     return PLUGIN_CHAINS.vocals.demon_layer
-  elseif track_name:find("Telephonic") then
+  elseif lower:find("telephonic", 1, true) then
     return PLUGIN_CHAINS.vocals.telephonic
-  elseif track_name:find("Whisper") then
+  elseif lower:find("whisper", 1, true) then
     return PLUGIN_CHAINS.vocals.whispers
+  elseif lower:find("scream", 1, true) or lower:find("throw", 1, true) then
+    return PLUGIN_CHAINS.vocals.scream_throw
+
+  -- Master Bus
+  elseif lower:find("bus comp", 1, true) or lower:find("ssl bus", 1, true) then
+    return PLUGIN_CHAINS.master.bus_comp
+  elseif lower:find("tape", 1, true) then
+    return PLUGIN_CHAINS.master.tape
+  elseif lower:find("master", 1, true) then
+    return PLUGIN_CHAINS.master.mastering
   end
 
   return nil
