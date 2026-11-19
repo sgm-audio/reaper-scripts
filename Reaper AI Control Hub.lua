@@ -8,6 +8,20 @@ function msg(m)
     reaper.ShowConsoleMsg(tostring(m) .. "\n")
 end
 
+-- Whole-word, case-insensitive match. Plain substring matching misclassified names such as
+-- "Gain Reduction Scope" or "Chain" as AI tools because "gain"/"chain" contain "ai".
+local function name_has(name, term)
+    local escaped = term:lower():gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")
+    return tostring(name):lower():find("%f[%w]" .. escaped .. "%f[%W]") ~= nil
+end
+
+local function name_has_any(name, terms)
+    for _, term in ipairs(terms) do
+        if name_has(name, term) then return true end
+    end
+    return false
+end
+
 -- AI Plugin Bridge System
 local AIPluginBridge = {}
 AIPluginBridge.__index = AIPluginBridge
@@ -34,7 +48,7 @@ function AIPluginBridge:discover_ai_plugins()
     
     -- Scan for known AI plugins
     local ai_plugin_patterns = {
-        "ReWIre", "AudioMovers", "Baby Audio", "Cyanleaf",
+        "ReWire", "AudioMovers", "Baby Audio", "Cyanleaf",
         "Soundwide", "Neural DSP", "AI", "ML", "Neural",
         "Stem", "Separate", "Mastering", "Analysis"
     }
@@ -45,7 +59,7 @@ function AIPluginBridge:discover_ai_plugins()
         local retval, name = reaper.TrackFX_GetFXName(reaper.GetMasterTrack(0), i, "")
         if retval then
             for j, pattern in ipairs(ai_plugin_patterns) do
-                if name:lower():find(pattern:lower(), 1, true) then
+                if name_has(name, pattern) then
                     local plugin_info = {
                         index = i,
                         name = name,
@@ -67,36 +81,42 @@ function AIPluginBridge:discover_ai_plugins()
 end
 
 function AIPluginBridge:_detect_plugin_type(fx_index)
-    -- Detect plugin format
+    -- REAPER reports FX names with a format prefix ("VST3: ", "VST: ", "CLAP: ", "JS: ", ...),
+    -- not a file extension, so classify on that prefix.
     local retval, fx_name = reaper.TrackFX_GetFXName(reaper.GetMasterTrack(0), fx_index, "")
     if not retval or not fx_name then
         return "Unknown"
     end
+    local prefix = fx_name:match("^(%a+%d*)i?:")
+    local by_prefix = {VST3 = "VST3", VST = "VST2", CLAP = "CLAP", AU = "AU", JS = "JSFX", LV2 = "LV2"}
+    if prefix then
+        local base = prefix:gsub("[iI]$", "")
+        if by_prefix[prefix] then return by_prefix[prefix] end
+        if by_prefix[base] then return by_prefix[base] end
+    end
     local lower_name = fx_name:lower()
-
     if lower_name:find(".vst3", 1, true) then
         return "VST3"
     elseif lower_name:find(".vst", 1, true) then
         return "VST2"
     elseif lower_name:find(".clap", 1, true) then
         return "CLAP"
-    else
-        return "Unknown"
     end
+    return "Unknown"
 end
 
 function AIPluginBridge:_categorize_plugin(plugin_name)
     local name_lower = plugin_name:lower()
     
-    if name_lower:find("rewire") or name_lower:find("audiomovers") then
+    if name_has_any(name_lower, {"rewire", "audiomovers", "omnibridge"}) then
         return "Routing/Host"
-    elseif name_lower:find("stem") or name_lower:find("separate") then
+    elseif name_has_any(name_lower, {"stem", "stems", "separate", "separator", "separation"}) then
         return "Stem Separation"
-    elseif name_lower:find("master") or name_lower:find("mastering") then
+    elseif name_has_any(name_lower, {"master", "mastering"}) then
         return "Mastering"
-    elseif name_lower:find("analyze") or name_lower:find("analysis") then
+    elseif name_has_any(name_lower, {"analyze", "analyzer", "analysis"}) then
         return "Analysis"
-    elseif name_lower:find("neural") or name_lower:find("ai") then
+    elseif name_has_any(name_lower, {"neural", "ai", "ml"}) then
         return "AI Processing"
     else
         return "General"
@@ -108,27 +128,27 @@ function AIPluginBridge:_assess_capabilities(plugin_name)
     local capabilities = {}
     
     -- Stem separation
-    if name_lower:find("separate") or name_lower:find("stem") then
+    if name_has_any(name_lower, {"separate", "separator", "separation", "stem", "stems"}) then
         table.insert(capabilities, "stem_separation")
     end
     
     -- Routing/Host
-    if name_lower:find("rewire") or name_lower:find("audiomovers") then
+    if name_has_any(name_lower, {"rewire", "audiomovers", "omnibridge"}) then
         table.insert(capabilities, "host_routing")
     end
     
     -- Mastering
-    if name_lower:find("master") or name_lower:find("loudness") then
+    if name_has_any(name_lower, {"master", "mastering", "loudness"}) then
         table.insert(capabilities, "mastering")
     end
     
     -- Analysis
-    if name_lower:find("analyze") or name_lower:find("meter") then
+    if name_has_any(name_lower, {"analyze", "analyzer", "analysis", "meter"}) then
         table.insert(capabilities, "analysis")
     end
     
     -- AI processing
-    if name_lower:find("neural") or name_lower:find("ai") then
+    if name_has_any(name_lower, {"neural", "ai", "ml"}) then
         table.insert(capabilities, "ai_processing")
     end
     
@@ -324,7 +344,7 @@ function ExternalToolLauncher:launch_external_processing(track_indices, tool_typ
 
     -- REAPER's Lua API has no portable one-call stem renderer. Print exact
     -- manual render targets instead of claiming that files were exported.
-    local project_path = reaper.GetProjectPath(0)
+    local project_path = reaper.GetProjectPath()
     if project_path == "" then
         msg("Save the project before choosing an external export directory.")
         return {}
@@ -358,7 +378,7 @@ function ExternalToolLauncher:_get_tool_config(tool_type)
         stem_separation = {
             executable = "python",
             args = "-m demucs",
-            working_dir = reaper.GetProjectPath(0),
+            working_dir = reaper.GetProjectPath(),
             name = "Demucs Stem Separator"
         },
         mastering = {
@@ -389,7 +409,7 @@ function ExternalToolLauncher:_execute_external_tool(tool_config, files)
     -- For now, just provide instructions
     msg("\nTo complete processing:")
     msg("1. Run: " .. tool_config.executable .. " " .. tool_config.args)
-    msg("2. Process exported files in: " .. reaper.GetProjectPath(0) .. "/external_ai_export")
+    msg("2. Process exported files in: " .. reaper.GetProjectPath() .. "/external_ai_export")
     msg("3. Import processed results back into REAPER")
 end
 

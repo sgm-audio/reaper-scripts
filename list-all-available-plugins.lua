@@ -51,6 +51,25 @@ function PluginScanner:detectCategory(name)
   else return "Utility" end
 end
 
+-- REAPER treats any file in Effects/ whose header has a "desc:" line as JSFX, and JSFX
+-- names may contain dots ("Auto-Wideness v1.0"), so an extension test alone is wrong.
+-- Fall back to the name when the file cannot be opened.
+local NON_JSFX_EXTENSIONS = {txt = true, md = true, png = true, jpg = true, wav = true, zip = true,
+  lua = true, ini = true, rpl = true, pdf = true, html = true, jsfx_inc = true}
+
+function PluginScanner:isJSFXFile(full_path, filename)
+  local handle = io.open(full_path, "rb")
+  if handle then
+    local head = handle:read(4096) or ""
+    handle:close()
+    return (head:match("^desc:") or head:match("[\r\n]desc:")) ~= nil
+  end
+  local lower = filename:lower()
+  local ext = lower:match("%.(%a+)$")
+  if ext and (ext == "jsfx" or ext == "js") then return true end
+  return not (ext and NON_JSFX_EXTENSIONS[ext])
+end
+
 function PluginScanner:scanDirectory(dir_path, prefix)
   local plugins = {}
   local index = 0
@@ -59,10 +78,9 @@ function PluginScanner:scanDirectory(dir_path, prefix)
     if not filename then break end
     local lower = filename:lower()
     local is_include = lower:match("%.jsfx%-inc$") ~= nil
-    local is_jsfx = lower:match("%.jsfx$") or lower:match("%.js$") or not filename:match("%.")
-    if not is_include and is_jsfx and not filename:match("^%.") then
+    if not is_include and not filename:match("^%.") and self:isJSFXFile(path_join(dir_path, filename), filename) then
       table.insert(plugins, {
-        name = prefix .. filename:gsub("%.[jJ][sS][fF]?[xX]?$", ""),
+        name = prefix .. (filename:gsub("%.[jJ][sS][fF]?[xX]?$", "")),
         path = path_join(dir_path, filename),
         type = "js",
       })
@@ -93,13 +111,18 @@ function PluginScanner:parseCache(ini_path, fallback_type)
         -- Current cache format: filename=UID,project_id,"Name (Developer)".
         local uid, _, remainder = data:match("^([^,]*),([^,]*),(.*)$")
         local name = remainder and trim(remainder) or nil
+        local is_instrument = false
         if name then
+          -- REAPER appends "!!!VSTi" to instrument entries; it is not part of the name.
+          local stripped, markers = name:gsub("!!!VSTi$", "")
+          if markers > 0 then name, is_instrument = trim(stripped), true end
           name = name:gsub('^"(.*)"$', "%1"):gsub('""', '"')
           local plugin_type = plugin_type_from_path(filename, fallback_type)
           table.insert(found, {
             name = name,
             path = filename,
             uid = trim(uid or ""),
+            is_instrument = is_instrument,
             type = plugin_type,
           })
         end
