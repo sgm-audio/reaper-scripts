@@ -184,6 +184,8 @@ class ReaperInterface:
 
     def build_project(self, data):
         saved_cursor = _rpr("RPR_GetCursorPosition")()
+        initial_track_count = _rpr("RPR_GetNumTracks")()
+        succeeded = False
         _rpr("RPR_Undo_BeginBlock")()
         _rpr("RPR_PreventUIRefresh")(1)
         try:
@@ -224,11 +226,21 @@ class ReaperInterface:
 
             for marker_data in data["markers"]:
                 self.create_marker(marker_data["position"], marker_data.get("name", ""), marker_data.get("colour", None))
+            succeeded = True
         finally:
-            _rpr("RPR_SetEditCurPos")(saved_cursor, False, False)
-            _rpr("RPR_PreventUIRefresh")(-1)
-            _rpr("RPR_Undo_EndBlock")("Import AAF", -1)
-            _rpr("RPR_UpdateArrange")()
+            try:
+                if not succeeded:
+                    # Count-based so a track that failed mid-creation is removed too.
+                    for index in range(_rpr("RPR_GetNumTracks")() - 1, initial_track_count - 1, -1):
+                        created = _rpr("RPR_GetTrack")(0, index)
+                        if _is_valid_ptr(created, "MediaTrack*"):
+                            _rpr("RPR_DeleteTrack")(created)
+                    log("AAF import failed; partially created tracks were removed.", ERROR)
+            finally:
+                _rpr("RPR_SetEditCurPos")(saved_cursor, False, False)
+                _rpr("RPR_PreventUIRefresh")(-1)
+                _rpr("RPR_Undo_EndBlock")("Import AAF", -1)
+                _rpr("RPR_UpdateArrange")()
 
 
 
