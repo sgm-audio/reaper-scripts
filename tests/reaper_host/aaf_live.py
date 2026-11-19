@@ -13,6 +13,9 @@ import traceback
 
 REPO = os.environ["SGM_REPO"]
 OUT = os.environ["SGM_HOST_OUT"]
+for p in os.environ.get("SGM_PYTHONPATH", "").split(os.pathsep):
+    if p and p not in sys.path:
+        sys.path.insert(0, p)
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tests"))
 
@@ -94,12 +97,21 @@ try:
     def t_sources_are_real_audio():
         build()
         tr = RPR_GetTrack(0, 0)
-        for idx, rate in ((0, 48000), (1, 48000)):
-            take = RPR_GetMediaItemTake(RPR_GetTrackMediaItem(tr, idx), 0)
+        for idx, length in ((0, 2.0), (1, 1.0)):
+            rate = 48000
+            item = RPR_GetTrackMediaItem(tr, idx)
+            take = RPR_GetMediaItemTake(item, 0)
             src = RPR_GetMediaItemTake_Source(take)
             assert src, "take has a source"
-            near(RPR_GetMediaSourceSampleRate(src), rate, 0, "sample rate")
-            assert RPR_GetMediaSourceNumChannels(src) == 1
+            fn = RPR_GetMediaSourceFileName(src, "", 512)[1]
+            assert os.path.isfile(fn), "source file exists: fn=%r src=%r data_src=%r" % (
+                fn, src, data["tracks"][0]["items"][idx]["source"])
+            sr = RPR_GetMediaSourceSampleRate(src)
+            ch = RPR_GetMediaSourceNumChannels(src)
+            ln = RPR_GetMediaSourceLength(src, 0)[0]
+            near(sr, rate, 0, "sample rate (%s ch=%s ln=%s)" % (fn, ch, ln))
+            assert ch == 1
+            near(ln, length, 1e-3, "source length")
 
     def t_cursor_preserved():
         clear()
@@ -129,17 +141,11 @@ try:
         d2 = dict(data)
         d2["markers"] = [{"name": "Verse", "position": 2.5, "colour": {"r": 255, "g": 0, "b": 0}}]
         rai.ReaperInterface().build_project(d2)
-        found = False
-        i = 0
-        while True:
-            r = RPR_EnumProjectMarkers2(0, i, 0, 0, 0, "", 0)
-            if not r[0]:
-                break
-            if r[5] == "Verse":
-                near(r[4], 2.5)
-                found = True
-            i += 1
-        assert found, "marker created in host"
+        total, _, num_markers, _ = RPR_CountProjectMarkers(0, 0, 0)
+        assert num_markers == 1, "expected 1 marker, got %r" % (num_markers,)
+        r = RPR_EnumProjectMarkers2(0, 0, 0, 0, 0, "", 0)
+        assert r[0] > 0 and r[3] == 0, "marker present: %r" % (r,)
+        near(r[4], 2.5, 1e-6, "marker position")
 
     for n, f in (("aaf.live.track_and_items_exact", t_track_and_items),
                  ("aaf.live.sources_are_real_audio_in_host", t_sources_are_real_audio),

@@ -97,22 +97,25 @@ class ReaperInterface:
         if not src or not os.path.isfile(src):
             log("Skipping missing media source: %s" % (src or "(empty)"), WARNING)
             return None
-        # Build the item directly: no edit-cursor mutation, no scratch track, and no crash
-        # when the source cannot be opened.
-        pcm = RPR_PCM_Source_CreateFromFile(src)
-        if not pcm:
-            log("REAPER could not open media source: %s" % src, WARNING)
-            return None
+        # Add an item directly on *track*, select only it, and attach *src* as a take via
+        # InsertMedia(..., 3): avoids edit-cursor mutation, avoids a scratch track, and avoids
+        # reaper_python.py's rpr_packp rejecting standalone PCM_Source_CreateFromFile pointers.
         item = RPR_AddMediaItemToTrack(track)
-        if not item:
+        if not item or str(item).endswith("0x0000000000000000"):
             log("Could not create media item for: %s" % src, WARNING)
             return None
-        take = RPR_AddTakeToMediaItem(item)
-        RPR_SetMediaItemTake_Source(take, pcm)
+        RPR_SelectAllMediaItems(0, False)
+        RPR_SetMediaItemSelected(item, True)
+        RPR_InsertMedia(src, 3)
+        RPR_SetMediaItemSelected(item, False)
+        take = RPR_GetActiveTake(item)
+        if not take or str(take).endswith("0x0000000000000000"):
+            RPR_DeleteTrackMediaItem(track, item)
+            log("REAPER could not open media source: %s" % src, WARNING)
+            return None
         RPR_SetMediaItemInfo_Value(item, "D_POSITION", pos)
         RPR_SetMediaItemInfo_Value(item, "D_LENGTH", dur)
-        if take:
-            RPR_SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offset)
+        RPR_SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offset)
         return item
 
     def set_item_fades(self, item, fadein=None, fadeout=None, fadeintype=0, fadeouttype=0):
