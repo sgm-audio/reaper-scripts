@@ -389,7 +389,8 @@ class PluginAndCacheRegressions(unittest.TestCase):
         self.assertIn(("undo_end", "Import AAF"), calls)
         self.assertIn(("refresh", 1), calls)
         self.assertIn(("refresh", -1), calls)
-        self.assertIn(("deleted", "Insertion"), calls)
+        self.assertNotIn(("deleted", "Insertion"), calls, "no scratch Insertion track may be created")
+        self.assertFalse(any(c[0] == "deleted" for c in calls if isinstance(c, tuple)))
         self.assertIn(("cursor", 4.5), calls)
         self.assertIn(("scale_mode", 0), calls)
 

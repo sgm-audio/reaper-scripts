@@ -43,9 +43,6 @@ def log(message, level=NOTICE):
 
 class ReaperInterface:
 
-    def __init__(self):
-        self.insertion_track = None
-
     def select_aaf(self):
         ok, filename, _, _ = RPR_GetUserFileNameForRead("", "Import AAF", ".aaf")
         if not ok: return None
@@ -100,20 +97,20 @@ class ReaperInterface:
         if not src or not os.path.isfile(src):
             log("Skipping missing media source: %s" % (src or "(empty)"), WARNING)
             return None
-        RPR_SetOnlyTrackSelected(self.insertion_track)
-        RPR_SetEditCurPos(0.0, False, False)
-        inserted = RPR_InsertMedia(src, 0)
-        if not inserted:
-            log("RPR_InsertMedia failed for: %s" % src, WARNING)
+        # Build the item directly: no edit-cursor mutation, no scratch track, and no crash
+        # when the source cannot be opened.
+        pcm = RPR_PCM_Source_CreateFromFile(src)
+        if not pcm:
+            log("REAPER could not open media source: %s" % src, WARNING)
             return None
-        item = RPR_GetTrackMediaItem(self.insertion_track, 0)
+        item = RPR_AddMediaItemToTrack(track)
         if not item:
-            log("Inserted media item not found for: %s" % src, WARNING)
+            log("Could not create media item for: %s" % src, WARNING)
             return None
-        RPR_MoveMediaItemToTrack(item, track)
+        take = RPR_AddTakeToMediaItem(item)
+        RPR_SetMediaItemTake_Source(take, pcm)
         RPR_SetMediaItemInfo_Value(item, "D_POSITION", pos)
         RPR_SetMediaItemInfo_Value(item, "D_LENGTH", dur)
-        take = RPR_GetMediaItemTake(item, 0)
         if take:
             RPR_SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", offset)
         return item
@@ -143,7 +140,6 @@ class ReaperInterface:
         RPR_Undo_BeginBlock()
         RPR_PreventUIRefresh(1)
         try:
-            self.insertion_track = self.create_track("Insertion")
             for track_data in data["tracks"]:
                 track = self.create_track(track_data["name"])
 
@@ -182,9 +178,6 @@ class ReaperInterface:
             for marker_data in data["markers"]:
                 self.create_marker(marker_data["position"], marker_data.get("name", ""), marker_data.get("colour", None))
         finally:
-            if self.insertion_track:
-                RPR_DeleteTrack(self.insertion_track)
-                self.insertion_track = None
             RPR_SetEditCurPos(saved_cursor, False, False)
             RPR_PreventUIRefresh(-1)
             RPR_Undo_EndBlock("Import AAF", -1)
@@ -275,16 +268,26 @@ class AAFInterface:
         stream.close()
 
         meta = mob.descriptor
-        data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
-        if data_fmt == "MXF":
+        data_fmt = ""
+        try:
+            data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
+        except Exception:
+            data_fmt = ""
+        is_container = bytes(data[:4]) in (b"RIFF", b"RF64", b"FORM")
+        if not is_container and "QuantizationBits" in meta:
+            # Raw PCM essence (PCMDescriptor) has no header: wrap it in a WAV using the
+            # descriptor's real rate / channels / bit depth instead of dumping headerless bytes.
             sample_depth = meta["QuantizationBits"].value
-            sample_rate = meta["SampleRate"].value
-            sample_rate = self.aafrational_value(sample_rate)
-            self.build_wav(filename, data, sample_depth, sample_rate)
+            try:
+                sample_rate = self.aafrational_value(meta["SampleRate"].value) if data_fmt == "MXF" \
+                    else meta["AudioSamplingRate"].value
+            except Exception:
+                sample_rate = meta["AudioSamplingRate"].value
+            channels = meta["Channels"].value if "Channels" in meta else 1
+            self.build_wav(filename, bytes(data), sample_depth, int(sample_rate), channels)
         else:
             with open(filename, "wb") as f:
                 f.write(data)
-                f.close()
 
         return filename
 

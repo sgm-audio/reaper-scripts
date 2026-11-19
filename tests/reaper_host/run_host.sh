@@ -20,10 +20,16 @@ mkdir -p "$H/.vst3/Neural DSP Archetype Gojira.vst3/Contents/x86_64-linux" \
 : > "$H/.clap/FabFilter Saturn 2.clap"; : > "$H/.vst/Waves SSL Comp.vst"; : > "$H/.vst/notes.md"
 export SGM_FIXTURE_HOME="$H"
 
+SCRIPT="${SGM_SCRIPT:-$REPO/tests/reaper_host/harness.lua}"
+if [ -n "${SGM_PYTHON_LIB:-}" ]; then
+  # Point REAPER's ReaScript at a real CPython (e.g. SGM_PYTHON_LIB=/usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0).
+  printf '[REAPER]\npythonlibpath64=%s\npythonlibdll64=%s\npythonuse64=1\n' \
+    "$(dirname "$SGM_PYTHON_LIB")" "$(basename "$SGM_PYTHON_LIB")" > "$WORK/cfg/reaper.ini"
+fi
 export SGM_REPO="$REPO" SGM_HOST_OUT="$OUT" SGM_CASES="$CASES"
 TIMEOUT="${SGM_HOST_TIMEOUT:-240}"
 ( cd "$REAPER_DIR" && HOME="$H" exec xvfb-run -a ./reaper -nosplash \
-    -cfgfile "$WORK/cfg/reaper.ini" -newinst -nonewinst "$REPO/tests/reaper_host/harness.lua" \
+    -cfgfile "$WORK/cfg/reaper.ini" -newinst -nonewinst "$SCRIPT" \
     >"$WORK/reaper.stdout" 2>&1 ) &
 PID=$!
 for _ in $(seq 1 "$TIMEOUT"); do
