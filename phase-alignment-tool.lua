@@ -304,6 +304,17 @@ local function analyzePhaseCorrelation()
     return
   end
 
+  local function hasAudio(take)
+    local source = reaper.GetMediaItemTake_Source(take)
+    if not source then return false end
+    local channels = reaper.GetMediaSourceNumChannels(source)
+    return type(channels) == "number" and channels > 0
+  end
+  if not hasAudio(take1) or not hasAudio(take2) then
+    reaper.ShowConsoleMsg("❌ One or both first items have no audio source (MIDI/empty/text?)\n")
+    return
+  end
+
   -- Item-position timing comparison
   local source1 = reaper.GetMediaItemTake_Source(take1)
   local sample_rate = source1 and reaper.GetMediaSourceSampleRate(source1) or 0

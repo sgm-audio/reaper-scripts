@@ -86,9 +86,6 @@ def log(message, level=NOTICE):
 
 class ReaperInterface:
 
-    def __init__(self):
-        self.insertion_track = None
-
     def select_aaf(self):
         ok, filename, _, _ = _rpr("RPR_GetUserFileNameForRead")("", "Import AAF", ".aaf")
         if not ok: return None
@@ -143,22 +140,22 @@ class ReaperInterface:
         if not src or not os.path.isfile(src):
             log("Skipping missing media source: %s" % (src or "(empty)"), WARNING)
             return None
-        _rpr("RPR_SetOnlyTrackSelected")(self.insertion_track)
-        _rpr("RPR_SetEditCurPos")(0.0, False, False)
-        inserted = _rpr("RPR_InsertMedia")(src, 0)
-        if not inserted:
-            log("RPR_InsertMedia failed for: %s" % src, WARNING)
+        # Build the item directly: no edit-cursor mutation, no scratch track, and no crash
+        # when the source cannot be opened.
+        pcm = _rpr("RPR_PCM_Source_CreateFromFile")(src)
+        if not _is_valid_ptr(pcm, "PCM_source*"):
+            log("REAPER could not open media source: %s" % src, WARNING)
             return None
-        item = _rpr("RPR_GetTrackMediaItem")(self.insertion_track, 0)
+        item = _rpr("RPR_AddMediaItemToTrack")(track)
         if not _is_valid_ptr(item, "MediaItem*"):
-            log("Inserted media item not found for: %s" % src, WARNING)
+            log("Could not create media item for: %s" % src, WARNING)
             return None
-        _rpr("RPR_MoveMediaItemToTrack")(item, track)
+        take = _rpr("RPR_AddTakeToMediaItem")(item)
+        if _is_valid_ptr(take, "MediaItem_Take*"):
+            _rpr("RPR_SetMediaItemTake_Source")(take, pcm)
+            _rpr("RPR_SetMediaItemTakeInfo_Value")(take, "D_STARTOFFS", offset)
         _rpr("RPR_SetMediaItemInfo_Value")(item, "D_POSITION", pos)
         _rpr("RPR_SetMediaItemInfo_Value")(item, "D_LENGTH", dur)
-        take = _rpr("RPR_GetMediaItemTake")(item, 0)
-        if _is_valid_ptr(take, "MediaItem_Take*"):
-            _rpr("RPR_SetMediaItemTakeInfo_Value")(take, "D_STARTOFFS", offset)
         return item
 
     def set_item_fades(self, item, fadein=None, fadeout=None, fadeintype=0, fadeouttype=0):
@@ -183,10 +180,11 @@ class ReaperInterface:
 
     def build_project(self, data):
         saved_cursor = _rpr("RPR_GetCursorPosition")()
+        initial_track_count = _rpr("RPR_GetNumTracks")()
+        succeeded = False
         _rpr("RPR_Undo_BeginBlock")()
         _rpr("RPR_PreventUIRefresh")(1)
         try:
-            self.insertion_track = self.create_track("Insertion")
             for track_data in data["tracks"]:
                 track = self.create_track(track_data["name"])
 
@@ -224,14 +222,21 @@ class ReaperInterface:
 
             for marker_data in data["markers"]:
                 self.create_marker(marker_data["position"], marker_data.get("name", ""), marker_data.get("colour", None))
+            succeeded = True
         finally:
-            if _is_valid_ptr(self.insertion_track, "MediaTrack*"):
-                _rpr("RPR_DeleteTrack")(self.insertion_track)
-                self.insertion_track = None
-            _rpr("RPR_SetEditCurPos")(saved_cursor, False, False)
-            _rpr("RPR_PreventUIRefresh")(-1)
-            _rpr("RPR_Undo_EndBlock")("Import AAF", -1)
-            _rpr("RPR_UpdateArrange")()
+            try:
+                if not succeeded:
+                    # Count-based so a track that failed mid-creation is removed too.
+                    for index in range(_rpr("RPR_GetNumTracks")() - 1, initial_track_count - 1, -1):
+                        created = _rpr("RPR_GetTrack")(0, index)
+                        if _is_valid_ptr(created, "MediaTrack*"):
+                            _rpr("RPR_DeleteTrack")(created)
+                    log("AAF import failed; partially created tracks were removed.", ERROR)
+            finally:
+                _rpr("RPR_SetEditCurPos")(saved_cursor, False, False)
+                _rpr("RPR_PreventUIRefresh")(-1)
+                _rpr("RPR_Undo_EndBlock")("Import AAF", -1)
+                _rpr("RPR_UpdateArrange")()
 
 
 
@@ -322,12 +327,26 @@ class AAFInterface:
             stream.close()
 
         meta = mob.descriptor
-        data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
-        if data_fmt == "MXF":
+        data_fmt = ""
+        try:
+            data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
+        except Exception:
+            data_fmt = ""
+        is_container = bytes(data[:4]) in (b"RIFF", b"RF64", b"FORM")
+        if not is_container and "QuantizationBits" in meta:
+            # Raw PCM essence (PCMDescriptor) has no header: wrap it in a WAV using the
+            # descriptor's real rate / channels / bit depth instead of dumping headerless bytes.
             sample_depth = meta["QuantizationBits"].value
-            sample_rate = int(round(self.aafrational_value(meta["SampleRate"].value)))
+            try:
+                sample_rate = (
+                    self.aafrational_value(meta["SampleRate"].value)
+                    if data_fmt == "MXF"
+                    else float(meta["AudioSamplingRate"].value)
+                )
+            except Exception:
+                sample_rate = float(meta["AudioSamplingRate"].value)
             channels = int(meta["Channels"].value) if "Channels" in meta else 1
-            self.build_wav(filename, data, sample_depth, sample_rate, channels=channels)
+            self.build_wav(filename, bytes(data), sample_depth, int(round(sample_rate)), channels=channels)
         else:
             with open(filename, "wb") as f:
                 f.write(data)

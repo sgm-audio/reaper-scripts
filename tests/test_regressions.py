@@ -618,9 +618,24 @@ class PluginAndCacheRegressions(unittest.TestCase):
         self.assertIn(("undo_end", "Import AAF"), calls)
         self.assertIn(("refresh", 1), calls)
         self.assertIn(("refresh", -1), calls)
-        self.assertIn(("deleted", "Insertion"), calls)
+        self.assertNotIn(("deleted", "Insertion"), calls)
+        self.assertFalse(any(c[0] == "deleted" for c in calls if isinstance(c, tuple)))
         self.assertIn(("cursor", 4.5), calls)
         self.assertIn(("scale_mode", 0), calls)
+
+    def test_suno_media_duration_falls_back_to_ffprobe(self):
+        import types
+        from suno_workflow_helper import SunoReaperWorkflow
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_ogg = Path(temp_dir) / "song.ogg"
+            fake_ogg.write_bytes(b"OggS-not-a-wav")
+            fake_completed = types.SimpleNamespace(returncode=0, stdout="123.45\n")
+            with patch("suno_workflow_helper.sf", None), \
+                 patch("suno_workflow_helper.shutil.which", return_value="/usr/bin/ffprobe"), \
+                 patch("suno_workflow_helper.subprocess.run", return_value=fake_completed):
+                dur = SunoReaperWorkflow._media_duration(str(fake_ogg))
+            self.assertAlmostEqual(dur, 123.45, places=6)
 
     def test_import_aaf_confirms_when_existing_tracks_present(self):
         import reaper_ai_integration as rai

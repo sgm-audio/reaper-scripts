@@ -8,12 +8,18 @@ local function msg(m)
     reaper.ShowConsoleMsg(tostring(m) .. "\n")
 end
 
-local function matches_ai_pattern(lower_name, pattern)
-    local lower_pattern = pattern:lower()
-    if lower_pattern == "ai" or lower_pattern == "ml" then
-        return lower_name:match("%f[%a]" .. lower_pattern .. "%f[%A]") ~= nil
+-- Whole-word, case-insensitive match. Plain substring matching misclassified names such as
+-- "Gain Reduction Scope" or "Chain" as AI tools because "gain"/"chain" contain "ai".
+local function name_has(name, term)
+    local escaped = term:lower():gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")
+    return tostring(name):lower():find("%f[%w]" .. escaped .. "%f[%W]") ~= nil
+end
+
+local function name_has_any(name, terms)
+    for _, term in ipairs(terms) do
+        if name_has(name, term) then return true end
     end
-    return lower_name:find(lower_pattern, 1, true) ~= nil
+    return false
 end
 
 local function get_saved_project_dir()
@@ -28,7 +34,7 @@ local function get_saved_project_dir()
             return ""
         end
     end
-    return reaper.GetProjectPath("") or ""
+    return reaper.GetProjectPath() or ""
 end
 
 -- AI Plugin Bridge System
@@ -59,7 +65,7 @@ function AIPluginBridge:discover_ai_plugins()
     
     -- Scan for known AI plugins
     local ai_plugin_patterns = {
-        "ReWIre", "AudioMovers", "Baby Audio", "Cyanleaf",
+        "ReWire", "AudioMovers", "Baby Audio", "Cyanleaf",
         "Soundwide", "Neural DSP", "AI", "ML", "Neural",
         "Stem", "Separate", "Mastering", "Analysis"
     }
@@ -74,9 +80,8 @@ function AIPluginBridge:discover_ai_plugins()
     for i = 0, plugin_count - 1 do
         local retval, name = reaper.TrackFX_GetFXName(master_track, i, "")
         if retval and name then
-            local lower_name = name:lower()
             for _, pattern in ipairs(ai_plugin_patterns) do
-                if matches_ai_pattern(lower_name, pattern) then
+                if name_has(name, pattern) then
                     local plugin_info = {
                         index = i,
                         name = name,
@@ -98,7 +103,8 @@ function AIPluginBridge:discover_ai_plugins()
 end
 
 function AIPluginBridge:_detect_plugin_type(fx_index)
-    -- Detect plugin format
+    -- REAPER reports FX names with a format prefix ("VST3: ", "VST: ", "CLAP: ", "JS: ", ...),
+    -- not a file extension, so classify on that prefix first.
     local master_track = reaper.GetMasterTrack(0)
     if not master_track then
         return "Unknown"
@@ -129,15 +135,15 @@ end
 function AIPluginBridge:_categorize_plugin(plugin_name)
     local name_lower = plugin_name:lower()
     
-    if name_lower:find("rewire", 1, true) or name_lower:find("audiomovers", 1, true) then
+    if name_has_any(name_lower, {"rewire", "audiomovers", "omnibridge"}) then
         return "Routing/Host"
-    elseif name_lower:find("stem", 1, true) or name_lower:find("separate", 1, true) then
+    elseif name_has_any(name_lower, {"stem", "stems", "separate", "separator", "separation"}) then
         return "Stem Separation"
-    elseif name_lower:find("master", 1, true) or name_lower:find("mastering", 1, true) then
+    elseif name_has_any(name_lower, {"master", "mastering"}) then
         return "Mastering"
-    elseif name_lower:find("analyze", 1, true) or name_lower:find("analysis", 1, true) then
+    elseif name_has_any(name_lower, {"analyze", "analyzer", "analysis"}) then
         return "Analysis"
-    elseif name_lower:find("neural", 1, true) or name_lower:match("%f[%a]ai%f[%A]") or name_lower:match("%f[%a]ml%f[%A]") then
+    elseif name_has_any(name_lower, {"neural", "ai", "ml"}) then
         return "AI Processing"
     else
         return "General"
@@ -149,27 +155,27 @@ function AIPluginBridge:_assess_capabilities(plugin_name)
     local capabilities = {}
     
     -- Stem separation
-    if name_lower:find("separate", 1, true) or name_lower:find("stem", 1, true) then
+    if name_has_any(name_lower, {"separate", "separator", "separation", "stem", "stems"}) then
         table.insert(capabilities, "stem_separation")
     end
     
     -- Routing/Host
-    if name_lower:find("rewire", 1, true) or name_lower:find("audiomovers", 1, true) then
+    if name_has_any(name_lower, {"rewire", "audiomovers", "omnibridge"}) then
         table.insert(capabilities, "host_routing")
     end
     
     -- Mastering
-    if name_lower:find("master", 1, true) or name_lower:find("loudness", 1, true) then
+    if name_has_any(name_lower, {"master", "mastering", "loudness"}) then
         table.insert(capabilities, "mastering")
     end
     
     -- Analysis
-    if name_lower:find("analyze", 1, true) or name_lower:find("meter", 1, true) then
+    if name_has_any(name_lower, {"analyze", "analyzer", "analysis", "meter"}) then
         table.insert(capabilities, "analysis")
     end
     
     -- AI processing
-    if name_lower:find("neural", 1, true) or name_lower:match("%f[%a]ai%f[%A]") or name_lower:match("%f[%a]ml%f[%A]") then
+    if name_has_any(name_lower, {"neural", "ai", "ml"}) then
         table.insert(capabilities, "ai_processing")
     end
     
@@ -407,21 +413,24 @@ function ExternalToolLauncher:_export_track_stems(track, track_name, export_dir,
 end
 
 function ExternalToolLauncher:_get_tool_config(tool_type, project_path)
+    local os_type = reaper.GetOS() or ""
+    local is_win = os_type == "Win32" or os_type == "Win64"
+    local ext = is_win and ".exe" or ""
     local configs = {
         stem_separation = {
-            executable = "python",
+            executable = is_win and "python" or "python3",
             args = "-m demucs",
             working_dir = project_path or get_saved_project_dir(),
             name = "Demucs Stem Separator"
         },
         mastering = {
-            executable = "omnibridge.exe", 
+            executable = "omnibridge" .. ext,
             args = "--mastering-mode",
             working_dir = "",
             name = "OmniBridge Mastering"
         },
         analysis = {
-            executable = "ai_analyzer.exe",
+            executable = "ai_analyzer" .. ext,
             args = "--batch-analysis",
             working_dir = "",
             name = "AI Audio Analyzer"
