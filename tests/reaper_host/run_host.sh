@@ -11,13 +11,18 @@ WORK="$(mktemp -d)"
 OUT="${SGM_HOST_OUT:-$WORK/host.log}"
 mkdir -p "$WORK/cfg" "$WORK/home"
 
-# Filesystem fixtures for scan-real-plugins.lua (it scans $HOME/.vst3, .clap, ...).
+# Either stage a real compiled VST3 bundle (for juce_vst3_live) or filesystem fixtures for scan-real-plugins.lua.
 H="$WORK/home"
-mkdir -p "$H/.vst3/Neural DSP Archetype Gojira.vst3/Contents/x86_64-linux" \
-         "$H/.vst3/Vendor/Deep/iZotope Ozone 11.vst3" "$H/.clap" "$H/.lxvst" "$H/.vst" "$H/.lv2/Some.lv2"
-: > "$H/.vst3/Neural DSP Archetype Gojira.vst3/Contents/x86_64-linux/Gojira.so"
-: > "$H/.vst3/FabFilter Pro-Q 3.vst3"; : > "$H/.vst3/Foo v2.5.vst3"; : > "$H/.vst3/readme.txt"
-: > "$H/.clap/FabFilter Saturn 2.clap"; : > "$H/.vst/Waves SSL Comp.vst"; : > "$H/.vst/notes.md"
+if [ -n "${SGM_VST3_BUNDLE:-}" ]; then
+  mkdir -p "$H/.vst3"
+  cp -a "$SGM_VST3_BUNDLE" "$H/.vst3/"
+else
+  mkdir -p "$H/.vst3/Neural DSP Archetype Gojira.vst3/Contents/x86_64-linux" \
+           "$H/.vst3/Vendor/Deep/iZotope Ozone 11.vst3" "$H/.clap" "$H/.lxvst" "$H/.vst" "$H/.lv2/Some.lv2"
+  : > "$H/.vst3/Neural DSP Archetype Gojira.vst3/Contents/x86_64-linux/Gojira.so"
+  : > "$H/.vst3/FabFilter Pro-Q 3.vst3"; : > "$H/.vst3/Foo v2.5.vst3"; : > "$H/.vst3/readme.txt"
+  : > "$H/.clap/FabFilter Saturn 2.clap"; : > "$H/.vst/Waves SSL Comp.vst"; : > "$H/.vst/notes.md"
+fi
 export SGM_FIXTURE_HOME="$H"
 
 SCRIPT="${SGM_SCRIPT:-$REPO/tests/reaper_host/harness.lua}"

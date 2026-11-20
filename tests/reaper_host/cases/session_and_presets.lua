@@ -28,6 +28,65 @@ return function(T)
     T.eq(reaper.CountTracks(0), 0, "single undo removes session tracks")
   end)
 
+  T.test("session.live.all_four_modes_in_populated_project_exact_counts_routing_fx_and_undo", function()
+    local modes = {
+      {mode = "full_production", tracks = 25, sends = 31},
+      {mode = "mixing", tracks = 7, sends = 6},
+      {mode = "mastering", tracks = 2, sends = 0},
+      {mode = "stem_separation", tracks = 6, sends = 4},
+    }
+    for _, spec in ipairs(modes) do
+      T.clear_project()
+      T.reset_ui()
+      T.add_track("PreExisting 1")
+      T.add_track("PreExisting 2")
+      reaper.Undo_OnStateChange("populated_fixture_" .. spec.mode)
+      T.menu_choice = 0
+      T.load_script("SGM_Professional_Session_Builder.lua")
+      T.dialog_answer = 1
+
+      local session = _G.SGMSessionBuilder.buildProfessionalSession(spec.mode, "stock")
+      T.ok(session ~= nil and session.implemented == true, spec.mode .. " implemented")
+      T.eq(reaper.CountTracks(0), 2 + spec.tracks, spec.mode .. " exact track count")
+      T.eq(session.sends_created, spec.sends, spec.mode .. " exact sends_created")
+      T.contains(T.console_text(), "Stock FX warnings: 0", spec.mode .. " zero stock FX warnings")
+
+      local host_sends = 0
+      local fx_verified = 0
+      for i, tmpl in ipairs(session.tracks) do
+        local tr = reaper.GetTrack(0, 2 + (i - 1))
+        T.ok(tr ~= nil, spec.mode .. " created track " .. i)
+        local expected_mainsend = tmpl.bus and 0.0 or 1.0
+        T.eq(reaper.GetMediaTrackInfo_Value(tr, "B_MAINSEND"), expected_mainsend,
+          spec.mode .. " B_MAINSEND on " .. tmpl.name)
+        if tmpl.muted then
+          T.eq(reaper.GetMediaTrackInfo_Value(tr, "B_MUTE"), 1.0, spec.mode .. " B_MUTE on " .. tmpl.name)
+        end
+        host_sends = host_sends + reaper.GetTrackNumSends(tr, 0)
+        local fx_cnt = reaper.TrackFX_GetCount(tr)
+        if tmpl.type ~= "reference" then
+          T.ok(fx_cnt >= 1, spec.mode .. " stock FX instantiated on " .. tmpl.name)
+          for fi = 0, fx_cnt - 1 do
+            local _, fxn = reaper.TrackFX_GetFXName(tr, fi, "")
+            T.ok(fxn:find("ReaEQ", 1, true) or fxn:find("ReaComp", 1, true) or fxn:find("ReaLimit", 1, true),
+              spec.mode .. " real stock FX name on " .. tmpl.name .. ": " .. fxn)
+            fx_verified = fx_verified + 1
+          end
+        end
+      end
+      T.eq(host_sends, spec.sends, spec.mode .. " host GetTrackNumSends sum matches")
+      T.ok(fx_verified >= 2, spec.mode .. " real ReaEQ/ReaComp/ReaLimit FX verified: " .. fx_verified)
+
+      -- Single-step undo must restore exact pre-run track count (2) and preserve existing tracks
+      reaper.Undo_DoUndo2(0)
+      T.eq(reaper.CountTracks(0), 2, spec.mode .. " single-step undo restored exact pre-run track count")
+      local _, pre1 = reaper.GetSetMediaTrackInfo_String(reaper.GetTrack(0, 0), "P_NAME", "", false)
+      local _, pre2 = reaper.GetSetMediaTrackInfo_String(reaper.GetTrack(0, 1), "P_NAME", "", false)
+      T.eq(pre1, "PreExisting 1", spec.mode .. " preserved PreExisting 1")
+      T.eq(pre2, "PreExisting 2", spec.mode .. " preserved PreExisting 2")
+    end
+  end)
+
   T.test("presets.live.signal_chain_library_loads_with_valid_categories", function()
     local lib = T.load_script("signal-chain-presets.lua")
     T.ok(type(lib) == "table", "SIGNAL_CHAIN_LIBRARY returned")

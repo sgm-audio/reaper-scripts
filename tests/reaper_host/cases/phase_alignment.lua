@@ -206,4 +206,35 @@ return function(T)
     T.eq(pa, 1, "track A positive polarity")
     T.eq(pb, -1, "track B negative polarity")
   end)
+
+  T.test("phase.live.quad_guitar_four_tracks_align_within_1ms_and_undo_restores_all", function()
+    local deltas_ms = {10, 22, 35, 48}
+    local tracks_list = {}
+    for i, ms in ipairs(deltas_ms) do
+      local tr = T.add_track("Quad " .. i)
+      local click_frame = math.floor(RATE * (ms / 1000.0))
+      T.add_item(tr, wav("quad_" .. ms, 1, click_frame, 0.85), 1.0)
+      tracks_list[i] = tr
+    end
+    T.select_only_tracks(tracks_list)
+    reaper.Undo_OnStateChange("quad_fixture")
+    load_tool(0)
+    _G.SGMPhaseAlignment.alignSelectedTracks()
+
+    local ref_t = nil
+    for i, ms in ipairs(deltas_ms) do
+      local item = reaper.GetTrackMediaItem(reaper.GetTrack(0, i - 1), 0)
+      local expected_pos = 1.0 - ((ms - deltas_ms[1]) / 1000.0)
+      T.near(T.item_pos(item), expected_pos, 0.001, "quad track " .. i .. " position within 1ms")
+      local t = _G.SGMPhaseAlignment.findFirstTransient(item)
+      if not ref_t then ref_t = t end
+      T.near(t, ref_t, 0.001, "quad track " .. i .. " aligned transient within 1ms")
+    end
+
+    reaper.Undo_DoUndo2(0)
+    for i = 1, #deltas_ms do
+      local item = reaper.GetTrackMediaItem(reaper.GetTrack(0, i - 1), 0)
+      T.near(T.item_pos(item), 1.0, 1e-9, "single-step undo restored quad track " .. i .. " D_POSITION")
+    end
+  end)
 end
