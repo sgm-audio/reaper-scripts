@@ -127,14 +127,19 @@ class RealDemucsTests(unittest.TestCase):
         self.assertEqual(set(out), {"bass"})
 
     def test_real_demucs_workflow_generates_relative_rpp_and_muted_reference_track(self):
-        from suno_workflow_helper import SunoReaperWorkflow
+        from suno_workflow_config_system import DeviceType, ModelConfig, PathConfig
+        from suno_workflow_helper import SunoReaperWorkflow, WorkflowConfig
 
         wf_dir = Path(self.tmp.name) / "wf_projects"
         wf_dir.mkdir(parents=True, exist_ok=True)
-        wf = SunoReaperWorkflow(output_base_dir=str(wf_dir), model_name="htdemucs", device="cpu")
+        cfg = WorkflowConfig(
+            paths=PathConfig(output_dir=str(wf_dir)),
+            models=ModelConfig(demucs_model="htdemucs", device=DeviceType.CPU),
+        )
+        wf = SunoReaperWorkflow(config=cfg)
         result = wf.process_suno_track(str(self.src), project_name="RealDemucsSession")
-        self.assertTrue(result["success"], result)
-        rpp_path = Path(result["reaper_project"])
+        self.assertTrue(result.success, result)
+        rpp_path = Path(result.project_file)
         self.assertTrue(rpp_path.is_file(), "generated .rpp must exist")
         rpp_text = rpp_path.read_text(encoding="utf-8")
 
