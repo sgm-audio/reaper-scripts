@@ -7,65 +7,73 @@
 
 local PLUGIN_DB_FILE = reaper.GetResourcePath() .. "/plugin_database.json"
 
+local function join_path(left, right)
+  return tostring(left or ""):gsub("\\", "/"):gsub("/+$", "") .. "/" .. right
+end
+
 -- Platform-specific plugin paths
 local function getScanPaths()
   local os_type = reaper.GetOS() or ""
-  local paths
-  if os_type == "Win32" or os_type == "Win64" then
-    local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
-    local prog_files_x86 = os.getenv("ProgramFiles(x86)") or "C:\\Program Files (x86)"
-    local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
-    paths = {
-      prog_files .. "\\VSTPlugins",
-      prog_files .. "\\Steinberg\\VSTPlugins",
-      common_files .. "\\VST3",
-      common_files .. "\\CLAP",
-      prog_files_x86 .. "\\VSTPlugins"
-    }
+  local is_win = os_type == "Win32" or os_type == "Win64"
+  local paths, seen = {}, {}
+  local function add(path)
+    if type(path) ~= "string" or path == "" then return end
+    local normalized = path:gsub("\\", "/"):gsub("/+$", "")
+    if normalized == "" then return end
+    local key = is_win and normalized:lower() or normalized
+    if not seen[key] then
+      seen[key] = true
+      table.insert(paths, normalized)
+    end
+  end
+
+  if is_win then
+    local prog_files = (os.getenv("ProgramFiles") or "C:/Program Files"):gsub("\\", "/")
+    local prog_files_x86 = (os.getenv("ProgramFiles(x86)") or "C:/Program Files (x86)"):gsub("\\", "/")
+    local common_files = (os.getenv("CommonProgramFiles") or join_path(prog_files, "Common Files")):gsub("\\", "/")
+    add(join_path(prog_files, "VSTPlugins"))
+    add(join_path(prog_files, "Steinberg/VSTPlugins"))
+    add(join_path(common_files, "VST3"))
+    add(join_path(common_files, "CLAP"))
+    add(join_path(prog_files_x86, "VSTPlugins"))
   elseif os_type:match("^OSX") or os_type:match("^macOS") then
-    paths = {
-      "/Library/Audio/Plug-Ins/VST",
-      "/Library/Audio/Plug-Ins/VST3",
-      "/Library/Audio/Plug-Ins/Components",
-      "/Library/Audio/Plug-Ins/CLAP",
-      "/Library/Audio/Plug-Ins/LV2"
-    }
+    add("/Library/Audio/Plug-Ins/VST")
+    add("/Library/Audio/Plug-Ins/VST3")
+    add("/Library/Audio/Plug-Ins/Components")
+    add("/Library/Audio/Plug-Ins/CLAP")
+    add("/Library/Audio/Plug-Ins/LV2")
     -- Per-user paths only exist when HOME is set
     local home = os.getenv("HOME")
-    if home then
-      table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST")
-      table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST3")
-      table.insert(paths, home .. "/Library/Audio/Plug-Ins/Components")
-      table.insert(paths, home .. "/Library/Audio/Plug-Ins/CLAP")
-      table.insert(paths, home .. "/Library/Audio/Plug-Ins/LV2")
+    if home and home ~= "" then
+      add(join_path(home, "Library/Audio/Plug-Ins/VST"))
+      add(join_path(home, "Library/Audio/Plug-Ins/VST3"))
+      add(join_path(home, "Library/Audio/Plug-Ins/Components"))
+      add(join_path(home, "Library/Audio/Plug-Ins/CLAP"))
+      add(join_path(home, "Library/Audio/Plug-Ins/LV2"))
     end
   else
     -- Linux
-    paths = {
-      "/usr/lib/vst",
-      "/usr/lib/lxvst",
-      "/usr/lib/vst3",
-      "/usr/local/lib/vst",
-      "/usr/local/lib/lxvst",
-      "/usr/local/lib/vst3",
-      "/usr/lib/clap",
-      "/usr/lib/lv2",
-      "/usr/local/lib/clap",
-      "/usr/local/lib/lv2"
-    }
+    add("/usr/lib/vst")
+    add("/usr/lib/lxvst")
+    add("/usr/lib/vst3")
+    add("/usr/local/lib/vst")
+    add("/usr/local/lib/lxvst")
+    add("/usr/local/lib/vst3")
+    add("/usr/lib/clap")
+    add("/usr/lib/lv2")
+    add("/usr/local/lib/clap")
+    add("/usr/local/lib/lv2")
     local home = os.getenv("HOME")
-    if home then
-      table.insert(paths, home .. "/.vst")
-      table.insert(paths, home .. "/.vst3")
-      table.insert(paths, home .. "/.lxvst")
-      table.insert(paths, home .. "/.clap")
-      table.insert(paths, home .. "/.lv2")
+    if home and home ~= "" then
+      add(join_path(home, ".vst"))
+      add(join_path(home, ".vst3"))
+      add(join_path(home, ".lxvst"))
+      add(join_path(home, ".clap"))
+      add(join_path(home, ".lv2"))
     end
   end
   return paths
 end
-
-local SCAN_PATHS = getScanPaths()
 
 -- ===================================
 -- PLUGIN DATABASE
@@ -377,16 +385,21 @@ function PluginScanner:performFullScan()
   self.scan_progress = 0
   self.total_files = 0
 
-  for _, path in ipairs(SCAN_PATHS) do
+  for _, path in ipairs(getScanPaths()) do
     reaper.ShowConsoleMsg("Scanning: " .. path .. "\n")
     local found = self:scanDirectory(path)
     reaper.ShowConsoleMsg("  Found " .. #found .. " plugins\n")
   end
 
   self.db.last_scan = os.time()
-  self.db:save()
+  local saved = self.db:save()
+  if not saved then
+    reaper.ShowConsoleMsg("\nERROR: Could not save plugin database to: " .. PLUGIN_DB_FILE .. "\n")
+    return false
+  end
 
   reaper.ShowConsoleMsg("\nScan complete! Total plugins: " .. #self.db.plugins .. "\n")
+  return true
 end
 
 -- ===================================
@@ -459,7 +472,7 @@ function PluginInstance:isEnabled()
 end
 
 function PluginInstance:remove()
-  reaper.TrackFX_Delete(self.track, self.fx_index)
+  return reaper.TrackFX_Delete(self.track, self.fx_index)
 end
 
 function PluginInstance:getStateChunk()
@@ -565,14 +578,14 @@ end
 
 local function scanAllPlugins()
   local scanner = PluginScanner:new()
-  scanner:performFullScan()
+  return scanner:performFullScan()
 end
 
 local function listAllPluginsOnTrack()
   local track = reaper.GetSelectedTrack(0, 0)
   if not track then
     reaper.ShowMessageBox("No track selected", "Error", 0)
-    return
+    return false
   end
 
   local fx_count = reaper.TrackFX_GetCount(track)
@@ -585,6 +598,7 @@ local function listAllPluginsOnTrack()
     plugin:printInfo()
     reaper.ShowConsoleMsg("\n")
   end
+  return true
 end
 
 local function automateSelectedPlugin()
@@ -686,6 +700,9 @@ _G.SGMPluginWrapper = {
   PluginInstance = PluginInstance,
   PluginAutomation = PluginAutomation,
   automateSelectedPlugin = automateSelectedPlugin,
+  scanAllPlugins = scanAllPlugins,
+  listAllPluginsOnTrack = listAllPluginsOnTrack,
+  showMenu = showMenu,
   getScanPaths = getScanPaths,
 }
 

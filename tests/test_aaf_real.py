@@ -2,8 +2,9 @@
 
 Unlike the mock-based regressions these tests *author a genuine AAF file with pyaaf2*
 (master mob + embedded PCM essence + composition mob), then drive AAFInterface over it
-and assert on the exact timeline numbers and the extracted audio bytes. They skip cleanly
-when optional pyaaf2 is not installed unless SGM_REQUIRE_PYAAF2=1 is set.
+and assert on the exact timeline numbers and the extracted audio bytes. They fail if
+pyaaf2 is not installed (it is a hard CI dependency: see requirements.txt) unless
+SGM_ALLOW_MISSING_PYAAF2=1 is set for local lightweight runs.
 """
 import math
 import os
@@ -44,13 +45,13 @@ def read_wav_frames(path):
         return w.readframes(w.getnframes()), w.getframerate(), w.getnchannels(), w.getsampwidth()
 
 
-@unittest.skipIf(aaf2 is None and os.environ.get("SGM_REQUIRE_PYAAF2") != "1",
-                 "optional pyaaf2 not installed (set SGM_REQUIRE_PYAAF2=1 to require)")
+@unittest.skipIf(aaf2 is None and os.environ.get("SGM_ALLOW_MISSING_PYAAF2") == "1",
+                 "pyaaf2 not installed (explicitly allowed)")
 class RealAAFRoundTrip(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if aaf2 is None:
-            raise RuntimeError("pyaaf2 is required when SGM_REQUIRE_PYAAF2=1: pip install pyaaf2")
+            raise RuntimeError("pyaaf2 is required for the real AAF tests: pip install pyaaf2")
         cls.tmp = tempfile.TemporaryDirectory()
         cls.dir = cls.tmp.name
         cls.wav_a = os.path.join(cls.dir, "clipA.wav")

@@ -52,7 +52,8 @@ def _is_valid_ptr(ptr, expected_type=None):
         )
         if validate is not None:
             try:
-                return bool(validate(ptr, expected_type))
+                raw_ptr = int(ptr.split("0x", 1)[1], 16) if isinstance(ptr, str) and "0x" in ptr else ptr
+                return bool(validate(raw_ptr, expected_type))
             except Exception:
                 return False
     return True
@@ -140,22 +141,25 @@ class ReaperInterface:
         if not src or not os.path.isfile(src):
             log("Skipping missing media source: %s" % (src or "(empty)"), WARNING)
             return None
-        # Build the item directly: no edit-cursor mutation, no scratch track, and no crash
-        # when the source cannot be opened.
-        pcm = _rpr("RPR_PCM_Source_CreateFromFile")(src)
-        if not _is_valid_ptr(pcm, "PCM_source*"):
-            log("REAPER could not open media source: %s" % src, WARNING)
-            return None
+        # Add an item directly on *track*, select only it, and attach *src* as a take via
+        # InsertMedia(..., 3): avoids edit-cursor mutation, avoids a scratch track, and avoids
+        # reaper_python.py's rpr_packp rejecting standalone PCM_Source_CreateFromFile pointers.
         item = _rpr("RPR_AddMediaItemToTrack")(track)
         if not _is_valid_ptr(item, "MediaItem*"):
             log("Could not create media item for: %s" % src, WARNING)
             return None
-        take = _rpr("RPR_AddTakeToMediaItem")(item)
-        if _is_valid_ptr(take, "MediaItem_Take*"):
-            _rpr("RPR_SetMediaItemTake_Source")(take, pcm)
-            _rpr("RPR_SetMediaItemTakeInfo_Value")(take, "D_STARTOFFS", offset)
+        _rpr("RPR_SelectAllMediaItems")(0, False)
+        _rpr("RPR_SetMediaItemSelected")(item, True)
+        _rpr("RPR_InsertMedia")(src, 3)
+        _rpr("RPR_SetMediaItemSelected")(item, False)
+        take = _rpr("RPR_GetActiveTake")(item)
+        if not _is_valid_ptr(take, "MediaItem_Take*"):
+            _rpr("RPR_DeleteTrackMediaItem")(track, item)
+            log("REAPER could not open media source: %s" % src, WARNING)
+            return None
         _rpr("RPR_SetMediaItemInfo_Value")(item, "D_POSITION", pos)
         _rpr("RPR_SetMediaItemInfo_Value")(item, "D_LENGTH", dur)
+        _rpr("RPR_SetMediaItemTakeInfo_Value")(take, "D_STARTOFFS", offset)
         return item
 
     def set_item_fades(self, item, fadein=None, fadeout=None, fadeintype=0, fadeouttype=0):

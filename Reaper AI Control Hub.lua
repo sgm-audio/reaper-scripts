@@ -34,7 +34,7 @@ local function get_saved_project_dir()
             return ""
         end
     end
-    return reaper.GetProjectPath() or ""
+    return reaper.GetProjectPath("") or ""
 end
 
 -- AI Plugin Bridge System
@@ -104,7 +104,7 @@ end
 
 function AIPluginBridge:_detect_plugin_type(fx_index)
     -- REAPER reports FX names with a format prefix ("VST3: ", "VST: ", "CLAP: ", "JS: ", ...),
-    -- not a file extension, so classify on that prefix first.
+    -- not a file extension, so classify on that prefix first, then fall back to extension.
     local master_track = reaper.GetMasterTrack(0)
     if not master_track then
         return "Unknown"
@@ -115,18 +115,28 @@ function AIPluginBridge:_detect_plugin_type(fx_index)
     end
     local lower_name = fx_name:lower()
 
-    if lower_name:match("^vst3i?:") or lower_name:find(".vst3", 1, true) then
+    if lower_name:match("^vst3i?:") then
         return "VST3"
-    elseif lower_name:match("^vsti?:") or lower_name:find(".vst", 1, true) then
+    elseif lower_name:match("^vsti?:") then
         return "VST2"
-    elseif lower_name:match("^clapi?:") or lower_name:find(".clap", 1, true) then
+    elseif lower_name:match("^clapi?:") then
         return "CLAP"
-    elseif lower_name:match("^aui?:") or lower_name:find(".component", 1, true) then
+    elseif lower_name:match("^aui?:") then
         return "AU"
-    elseif lower_name:match("^lv2i?:") or lower_name:find(".lv2", 1, true) then
+    elseif lower_name:match("^lv2i?:") then
         return "LV2"
     elseif lower_name:match("^js:") then
         return "JSFX"
+    elseif lower_name:match("%.vst3$") then
+        return "VST3"
+    elseif lower_name:match("%.vst$") or lower_name:match("%.dll$") or lower_name:match("%.so$") then
+        return "VST2"
+    elseif lower_name:match("%.clap$") then
+        return "CLAP"
+    elseif lower_name:match("%.component$") then
+        return "AU"
+    elseif lower_name:match("%.lv2$") then
+        return "LV2"
     else
         return "Unknown"
     end
@@ -322,32 +332,50 @@ function ExternalToolLauncher:new()
 end
 
 function ExternalToolLauncher:_get_tool_paths()
-    local paths = {}
     local os_type = reaper.GetOS() or ""
-    if os_type == "Win32" or os_type == "Win64" then
-        local prog_files = os.getenv("ProgramFiles") or "C:\\Program Files"
-        local common_files = os.getenv("CommonProgramFiles") or (prog_files .. "\\Common Files")
-        table.insert(paths, prog_files .. "\\AudioMovers\\OmniBridge")
-        table.insert(paths, common_files .. "\\VST3\\AI")
-        table.insert(paths, prog_files .. "\\ReWire")
+    local is_win = os_type == "Win32" or os_type == "Win64"
+    local paths, seen = {}, {}
+    local function join_path(left, right)
+        return tostring(left or ""):gsub("\\", "/"):gsub("/+$", "") .. "/" .. right
+    end
+    local function add(path)
+        if type(path) ~= "string" or path == "" then return end
+        local normalized = path:gsub("\\", "/"):gsub("/+$", "")
+        if normalized == "" then return end
+        local key = is_win and normalized:lower() or normalized
+        if not seen[key] then
+            seen[key] = true
+            table.insert(paths, normalized)
+        end
+    end
+
+    if is_win then
+        local prog_files = (os.getenv("ProgramFiles") or "C:/Program Files"):gsub("\\", "/")
+        local common_files = (os.getenv("CommonProgramFiles") or join_path(prog_files, "Common Files")):gsub("\\", "/")
+        add(join_path(prog_files, "AudioMovers/OmniBridge"))
+        add(join_path(common_files, "VST3/AI"))
+        add(join_path(prog_files, "ReWire"))
     elseif os_type:match("^OSX") or os_type:match("^macOS") then
         local home = os.getenv("HOME") or ""
-        table.insert(paths, "/Applications/AudioMovers/OmniBridge.app")
+        add("/Applications/AudioMovers/OmniBridge.app")
         if home ~= "" then
-            table.insert(paths, home .. "/Library/Audio/Plug-Ins/VST3/AI")
+            add(join_path(home, "Library/Audio/Plug-Ins/VST3/AI"))
         end
     else
         -- Linux
         local home = os.getenv("HOME") or ""
         if home ~= "" then
-            table.insert(paths, home .. "/.vst3/AI")
-            table.insert(paths, home .. "/.local/share/AudioMovers/OmniBridge")
+            add(join_path(home, ".vst3/AI"))
+            add(join_path(home, ".local/share/AudioMovers/OmniBridge"))
         end
-        table.insert(paths, "/usr/lib/vst3/AI")
-        table.insert(paths, "/usr/local/lib/vst3/AI")
+        add("/usr/lib/vst3/AI")
+        add("/usr/local/lib/vst3/AI")
     end
     -- REAPER resource path works on every OS (forward slashes are portable)
-    table.insert(paths, reaper.GetResourcePath() .. "/UserPlugins/AI")
+    local res_path = reaper.GetResourcePath and reaper.GetResourcePath() or ""
+    if res_path ~= "" then
+        add(join_path(res_path, "UserPlugins/AI"))
+    end
     return paths
 end
 

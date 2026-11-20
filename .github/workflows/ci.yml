@@ -101,6 +101,84 @@ jobs:
       - name: Suno workflow test suite (23 tests, skips forbidden)
         run: python suno_workflow_comprehensive_test_suite.py
 
+  lua-multi-os:
+    name: Lua 5.4 regression (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+      - name: Syntax, regression, API contracts
+        run: |
+          for f in *.lua; do lua -e "assert(loadfile('$f'))" || exit 1; done
+          lua tests/lua_regression.lua
+          lua tests/lua_api_contracts.lua
+      - name: Smoke
+        run: |
+          for f in *.lua; do lua tests/lua_smoke.lua "$f" || exit 1; done
+
+  reaper-host:
+    # Real REAPER 7.x (headless Xvfb): in-host Lua cases and live AAF import via REAPER's Python.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install REAPER and Xvfb
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libasound2t64 xz-utils libpython3-dev || sudo apt-get install -y xvfb libgtk-3-0 libasound2 xz-utils libpython3-dev
+          curl -fsSL -o reaper.tar.xz https://www.reaper.fm/files/7.x/reaper786_linux_x86_64.tar.xz
+          tar xf reaper.tar.xz
+          pip install -r requirements.txt
+      - name: Live REAPER Lua cases
+        run: SGM_HOST_ARTIFACTS=host-logs SGM_HOST_TIMEOUT=240 tests/reaper_host/run_host.sh "$PWD/reaper_linux_x86_64/REAPER"
+      - name: Live REAPER AAF import (embedded Python)
+        run: |
+          LIBPY=$(python -c "import sysconfig,os;p=os.path.join(sysconfig.get_config_var('LIBDIR') or '',sysconfig.get_config_var('INSTSONAME') or '');print(p if p.endswith('.so') or '.so.' in p else '')")
+          if [ -z "$LIBPY" ] || [ ! -f "$LIBPY" ]; then
+            LIBPY=$(find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name 'libpython3.*.so.1.0' | head -1)
+          fi
+          SP=$(python -c "import aaf2,os;print(os.path.dirname(os.path.dirname(aaf2.__file__)))")
+          mkdir -p host-logs-aaf
+          SGM_HOST_ARTIFACTS=host-logs-aaf SGM_SCRIPT="$PWD/tests/reaper_host/aaf_live.py" SGM_PYTHON_LIB="$LIBPY" \
+            SGM_PYTHONPATH="$SP" SGM_HOST_TIMEOUT=240 tests/reaper_host/run_host.sh "$PWD/reaper_linux_x86_64/REAPER"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reaper-host-logs
+          path: |
+            host-logs
+            host-logs-aaf
+
+  real-demucs:
+    # Runs the real htdemucs model on CPU. A missing backend or model download is a failure, not a skip.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU torch and demucs
+        run: |
+          pip install -r requirements.txt
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install demucs
+      - name: Real Demucs tests
+        env:
+          SGM_REAL_DEMUCS: "1"
+        run: python -m unittest tests.test_demucs_real -v
+
   plugin-build:
     name: JUCE plugin (${{ matrix.os }})
     strategy:

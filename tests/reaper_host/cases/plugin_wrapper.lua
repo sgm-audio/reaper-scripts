@@ -156,4 +156,20 @@ return function(T)
     local saved = T.read_file(res("plugin_database.json"))
     T.ok(saved and saved:find("Foo v2.5", 1, true), "scan persisted to the resource path")
   end)
+
+  T.test("wrapper.live.menu_rows_list_track_fx_and_export_database", function()
+    local w = W()
+    local tr = eq_instance(w, "ReaEQ")
+    T.select_only_tracks({tr})
+    T.reset_ui()
+    T.menu_choice = 2
+    w.showMenu()
+    T.contains(T.console_text(), "ReaEQ", "menu row 2 prints real track FX")
+    T.reset_ui()
+    os.remove(res("plugin_database.json"))
+    T.menu_choice = 4
+    w.showMenu()
+    T.ok(T.read_file(res("plugin_database.json")) ~= nil, "menu row 4 writes plugin_database.json")
+    T.ok(#T.dialogs >= 1 and T.dialogs[#T.dialogs].title == "Success", "menu row 4 shows Success dialog")
+  end)
 end

@@ -23,9 +23,22 @@ export SGM_FIXTURE_HOME="$H"
 SCRIPT="${SGM_SCRIPT:-$REPO/tests/reaper_host/harness.lua}"
 if [ -n "${SGM_PYTHON_LIB:-}" ]; then
   # Point REAPER's ReaScript at a real CPython (e.g. SGM_PYTHON_LIB=/usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0).
-  printf '[REAPER]\npythonlibpath64=%s\npythonlibdll64=%s\npythonuse64=1\n' \
-    "$(dirname "$SGM_PYTHON_LIB")" "$(basename "$SGM_PYTHON_LIB")" > "$WORK/cfg/reaper.ini"
+  echo 'reaper.Main_OnCommand(40004,0)' > "$WORK/quit.lua"
+  ( cd "$REAPER_DIR" && HOME="$H" timeout 90 xvfb-run -a ./reaper -nosplash \
+      -cfgfile "$WORK/cfg/reaper.ini" -newinst -nonewinst "$WORK/quit.lua" >/dev/null 2>&1 )
+  [ -f "$WORK/cfg/reaper.ini" ] || { echo "warmup produced no reaper.ini"; exit 1; }
+  sed -i "s|^\[reaper\]\$|[reaper]\nreascript=1\npythonlibpath64=$(dirname "$SGM_PYTHON_LIB")\npythonlibdll64=$(basename "$SGM_PYTHON_LIB")\npythonuse64=1|" "$WORK/cfg/reaper.ini"
+  grep -q '^pythonuse64=1' "$WORK/cfg/reaper.ini" || { echo "failed to configure python"; exit 1; }
 fi
+case "$SCRIPT" in
+  *.py)  # REAPER only auto-runs Lua from the command line: register and run the Python via a Lua launcher.
+    cat > "$WORK/launch_py.lua" <<LUA
+local id = reaper.AddRemoveReaScript(true, 0, "$SCRIPT", true)
+local f = io.open(os.getenv("SGM_HOST_OUT") .. ".launch", "w"); f:write("id=" .. tostring(id), "\\n"); f:close()
+if id and id ~= 0 then reaper.Main_OnCommand(id, 0) end
+LUA
+    SCRIPT="$WORK/launch_py.lua" ;;
+esac
 export SGM_REPO="$REPO" SGM_HOST_OUT="$OUT" SGM_CASES="$CASES"
 TIMEOUT="${SGM_HOST_TIMEOUT:-240}"
 ( cd "$REAPER_DIR" && HOME="$H" exec xvfb-run -a ./reaper -nosplash \

@@ -10,8 +10,20 @@ end
 
 local temp_root = os.tmpname()
 os.remove(temp_root)
+local is_windows = package.config:sub(1, 1) == "\\"
 local function make_dir(path)
-  os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  if is_windows then
+    os.execute('mkdir "' .. tostring(path):gsub("/", "\\") .. '"')
+  else
+    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  end
+end
+local function remove_dir(path)
+  if is_windows then
+    os.execute('rmdir /s /q "' .. tostring(path):gsub("/", "\\") .. '"')
+  else
+    os.execute("rm -rf '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  end
 end
 make_dir(temp_root .. "/Effects")
 
@@ -321,6 +333,206 @@ if development then
   check(not development.create_development_project(), "generator overwrote an existing project")
 end
 
+-- rule-of-30-plugin-presets.lua: unit tests for findPlugin() and getChainForTrack() edge cases.
+local fx_count_calls = 0
+local mock_track = {
+  fx = {
+    {ok = false, name = "Unreadable"},
+    {ok = true, name = "VST3: Pro-Q 3 (FabFilter)"},
+    {ok = true, name = "VST3: CLA-76 Bluey (Waves)"},
+    {ok = true, name = "VST3: H-EQ (Waves)"},
+  }
+}
+local prev_fx_count = reaper.TrackFX_GetCount
+local prev_fx_name = reaper.TrackFX_GetFXName
+reaper.TrackFX_GetCount = function(tr)
+  fx_count_calls = fx_count_calls + 1
+  return tr and tr.fx and #tr.fx or 0
+end
+reaper.TrackFX_GetFXName = function(tr, idx, _)
+  local entry = tr.fx[idx + 1]
+  if not entry then return false, "" end
+  return entry.ok, entry.name
+end
+check(presets.findPlugin(nil, "Pro-Q 3") == nil, "findPlugin(nil, name) must return nil")
+check(presets.findPlugin(mock_track, nil) == nil, "findPlugin(track, nil) must return nil")
+check(presets.findPlugin(mock_track, "") == nil, "findPlugin(track, '') must return nil")
+check(presets.findPlugin(mock_track, 123) == nil, "findPlugin(track, non-string) must return nil")
+check(fx_count_calls == 0, "findPlugin must guard invalid inputs before querying TrackFX_GetCount")
+check(presets.findPlugin({fx = {}}, "Pro-Q 3") == nil, "findPlugin on empty track must return nil")
+check(presets.findPlugin(mock_track, "pro-q 3") == 1, "findPlugin must match lowercase query to 0-based index 1")
+check(presets.findPlugin(mock_track, "PRO-Q 3") == 1, "findPlugin must match uppercase query to 0-based index 1")
+check(presets.findPlugin(mock_track, "(FabFilter)") == 1, "findPlugin must match plain Lua pattern metacharacters")
+check(presets.findPlugin(mock_track, "cla-76") == 2, "findPlugin must match hyphenated plugin name")
+check(presets.findPlugin(mock_track, "H-EQ") == 3, "findPlugin must find last plugin on track")
+check(presets.findPlugin(mock_track, "Unreadable") == nil, "findPlugin must ignore entries where TrackFX_GetFXName returns false")
+check(presets.findPlugin(mock_track, "NonExistent") == nil, "findPlugin must return nil when plugin absent")
+reaper.TrackFX_GetCount = prev_fx_count
+reaper.TrackFX_GetFXName = prev_fx_name
+
+check(presets.getChainForTrack(nil) == nil, "getChainForTrack(nil) must return nil")
+check(presets.getChainForTrack("") == nil, "getChainForTrack('') must return nil")
+check(presets.getChainForTrack(42) == nil, "getChainForTrack(number) must return nil")
+check(presets.getChainForTrack({}) == nil, "getChainForTrack(table) must return nil")
+check(presets.getChainForTrack("ATOM") == nil, "ATOM must not falsely match toms")
+check(presets.getChainForTrack("Unmatched Track") == nil, "Unmatched Track must return nil")
+local chain_cases = {
+  {"KICK IN", "Kick In (Click/Attack)"},
+  {"kick out", "Kick Out (Body)"},
+  {"Kick Sub", "Kick Sub (Sine Trigger)"},
+  {"SNARE TOP", "Snare Top"},
+  {"snare bottom", "Snare Bottom"},
+  {"GLITCH SNARE", "Glitch Snare (Duplicate)"},
+  {"Rack Tom 1", "Toms (Rack/Floor)"},
+  {"FLOOR TOMS", "Toms (Rack/Floor)"},
+  {"ROOM MONO", "Room Mono (Crushed)"},
+  {"BASS DI", "Bass DI (The Lows)"},
+  {"bass amp", "Bass Amp (The Mids)"},
+  {"BASS FUZZ", "Bass Fuzz (The Highs)"},
+  {"bass synth", "Bass Synth Layer"},
+  {"RHYTHM L1", "Rhythm Guitars L/R (100%)"},
+  {"rhythm r2", "Rhythm Guitars L2/R2 (80%)"},
+  {"OCTAVE LEAD", "Octave Leads"},
+  {"THE SCRAPE", "The Scrape"},
+  {"IMPACTS", "Impacts/Boom"},
+  {"WHITE NOISE RISER", "White Noise Risers"},
+  {"GLITCH BUS", "Glitch Bus Master"},
+  {"LEAD VOCAL", "Lead Vocal (Core)"},
+  {"LEAD VOCAL (HARD-TUNED)", "Lead Vocal (Hard-Tuned)"},
+  {"DEMON LAYER", "Demon Layer"},
+  {"TELEPHONIC", "Telephonic Layer"},
+  {"WHISPER L", "Whisper Tracks L/R"},
+  {"SSL BUS COMP", "SSL Bus Compressor"},
+  {"TAPE SAT", "Tape Saturation"},
+}
+for _, pair_case in ipairs(chain_cases) do
+  local matched = presets.getChainForTrack(pair_case[1])
+  check(matched and matched.name == pair_case[2],
+    "getChainForTrack(" .. pair_case[1] .. ") expected " .. pair_case[2] .. ", got " .. tostring(matched and matched.name))
+end
+
+-- Parameterized multi-OS path tests across Linux, Win64, Win32, OSX64, and macOS-arm64.
+assert(loadfile("Reaper AI Control Hub.lua"))()
+local function verify_paths(label, paths, is_win, expected_substrings)
+  check(type(paths) == "table" and #paths > 0, label .. ": must return non-empty path list")
+  local seen = {}
+  for _, p in ipairs(paths) do
+    check(type(p) == "string" and p ~= "", label .. ": every path must be non-empty string")
+    check(p:find("\\", 1, true) == nil, label .. ": path must use portable forward slashes: " .. tostring(p))
+    check(p:find("//", 1, true) == nil, label .. ": path must not contain double slashes: " .. tostring(p))
+    check(not p:match("/$"), label .. ": path must not end with trailing slash: " .. tostring(p))
+    local key = is_win and p:lower() or p
+    check(not seen[key], label .. ": duplicate path detected: " .. tostring(p))
+    seen[key] = true
+  end
+  for _, needle in ipairs(expected_substrings) do
+    local matched = false
+    for _, p in ipairs(paths) do
+      if p == needle then matched = true; break end
+    end
+    check(matched, label .. ": missing expected path " .. needle)
+  end
+end
+
+local orig_getenv = os.getenv
+local orig_getos = reaper.GetOS
+local multi_os_cases = {
+  {
+    os_name = "Linux",
+    is_win = false,
+    env = {HOME = "/home/scott/"},
+    scan_expect = {"/usr/lib/vst3", "/usr/lib/lxvst", "/home/scott/.vst3", "/home/scott/.clap"},
+    wrap_expect = {"/usr/lib/vst3", "/usr/lib/lxvst", "/home/scott/.vst3", "/home/scott/.clap"},
+    hub_expect = {"/home/scott/.vst3/AI", "/usr/lib/vst3/AI", temp_root:gsub("\\", "/") .. "/UserPlugins/AI"},
+    expected_python = "python3",
+    expected_ext = "",
+  },
+  {
+    os_name = "Win64",
+    is_win = true,
+    env = {
+      ProgramFiles = "D:\\Apps\\",
+      ["ProgramFiles(x86)"] = "D:\\Apps (x86)\\",
+      CommonProgramFiles = "D:\\Common\\",
+      LOCALAPPDATA = "C:\\Users\\Scott\\AppData\\Local\\",
+    },
+    scan_expect = {"D:/Apps/VSTPlugins", "D:/Apps (x86)/VSTPlugins", "D:/Common/VST3", "D:/Common/CLAP", "C:/Users/Scott/AppData/Local/Programs/Common/VST3"},
+    wrap_expect = {"D:/Apps/VSTPlugins", "D:/Apps (x86)/VSTPlugins", "D:/Common/VST3", "D:/Common/CLAP"},
+    hub_expect = {"D:/Apps/AudioMovers/OmniBridge", "D:/Common/VST3/AI", "D:/Apps/ReWire", temp_root:gsub("\\", "/") .. "/UserPlugins/AI"},
+    expected_python = "python",
+    expected_ext = ".exe",
+  },
+  {
+    -- Win32 where ProgramFiles == ProgramFiles(x86) to verify deduplication!
+    os_name = "Win32",
+    is_win = true,
+    env = {
+      ProgramFiles = "C:\\Program Files\\",
+      ["ProgramFiles(x86)"] = "c:/program files",
+      CommonProgramFiles = "C:\\Program Files\\Common Files\\",
+    },
+    scan_expect = {"C:/Program Files/VSTPlugins", "C:/Program Files/Steinberg/VSTPlugins", "C:/Program Files/Common Files/VST3", "C:/Program Files/Common Files/CLAP"},
+    wrap_expect = {"C:/Program Files/VSTPlugins", "C:/Program Files/Steinberg/VSTPlugins", "C:/Program Files/Common Files/VST3", "C:/Program Files/Common Files/CLAP"},
+    hub_expect = {"C:/Program Files/AudioMovers/OmniBridge", "C:/Program Files/Common Files/VST3/AI", "C:/Program Files/ReWire"},
+    expected_python = "python",
+    expected_ext = ".exe",
+  },
+  {
+    os_name = "OSX64",
+    is_win = false,
+    env = {HOME = "/Users/scott/"},
+    scan_expect = {"/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/Components", "/Users/scott/Library/Audio/Plug-Ins/VST3", "/Users/scott/Library/Audio/Plug-Ins/CLAP"},
+    wrap_expect = {"/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/Components", "/Users/scott/Library/Audio/Plug-Ins/VST3", "/Users/scott/Library/Audio/Plug-Ins/CLAP"},
+    hub_expect = {"/Applications/AudioMovers/OmniBridge.app", "/Users/scott/Library/Audio/Plug-Ins/VST3/AI"},
+    expected_python = "python3",
+    expected_ext = "",
+  },
+  {
+    os_name = "macOS-arm64",
+    is_win = false,
+    env = {}, -- nil HOME fallback must omit per-user paths cleanly
+    scan_expect = {"/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/Components", "/Library/Audio/Plug-Ins/CLAP"},
+    wrap_expect = {"/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/Components", "/Library/Audio/Plug-Ins/CLAP"},
+    hub_expect = {"/Applications/AudioMovers/OmniBridge.app", temp_root:gsub("\\", "/") .. "/UserPlugins/AI"},
+    expected_python = "python3",
+    expected_ext = "",
+  },
+}
+
+for _, spec in ipairs(multi_os_cases) do
+  reaper.GetOS = function() return spec.os_name end
+  rawset(os, "getenv", function(key) return spec.env[key] end)
+
+  local scan_paths = _G.SGMRealPluginScanner.get_scan_paths()
+  verify_paths("scan-real-plugins[" .. spec.os_name .. "]", scan_paths, spec.is_win, spec.scan_expect)
+
+  local wrap_paths = _G.SGMPluginWrapper.getScanPaths()
+  verify_paths("plugin-wrapper[" .. spec.os_name .. "]", wrap_paths, spec.is_win, spec.wrap_expect)
+
+  local launcher = _G.ExternalToolLauncher:new()
+  verify_paths("ai-control-hub[" .. spec.os_name .. "]", launcher.tool_paths, spec.is_win, spec.hub_expect)
+
+  local stem_cfg = launcher:_get_tool_config("stem_separation", "/proj")
+  local master_cfg = launcher:_get_tool_config("mastering", "/proj")
+  check(stem_cfg.executable == spec.expected_python,
+    "ai-control-hub[" .. spec.os_name .. "] stem executable expected " .. spec.expected_python .. ", got " .. tostring(stem_cfg.executable))
+  check(master_cfg.executable == ("omnibridge" .. spec.expected_ext),
+    "ai-control-hub[" .. spec.os_name .. "] mastering executable expected omnibridge" .. spec.expected_ext)
+end
+
+-- Verify Win64 nil-env fallbacks produce valid default Windows paths with zero duplicates.
+reaper.GetOS = function() return "Win64" end
+rawset(os, "getenv", function(_) return nil end)
+verify_paths("scan-real-plugins[Win64-nil-env]", _G.SGMRealPluginScanner.get_scan_paths(), true,
+  {"C:/Program Files/VSTPlugins", "C:/Program Files (x86)/VSTPlugins", "C:/Program Files/Common Files/VST3"})
+verify_paths("plugin-wrapper[Win64-nil-env]", _G.SGMPluginWrapper.getScanPaths(), true,
+  {"C:/Program Files/VSTPlugins", "C:/Program Files (x86)/VSTPlugins", "C:/Program Files/Common Files/VST3"})
+verify_paths("ai-control-hub[Win64-nil-env]", _G.ExternalToolLauncher:new().tool_paths, true,
+  {"C:/Program Files/AudioMovers/OmniBridge", "C:/Program Files/Common Files/VST3/AI"})
+
+rawset(os, "getenv", orig_getenv)
+reaper.GetOS = orig_getos
+
 -- Remaining entry points must not crash with no menu selection/confirmation.
 for _, filename in ipairs({
   "Reaper AI Control Hub.lua",
@@ -338,7 +550,7 @@ for _, filename in ipairs({
   end
 end
 
-os.execute("rm -rf '" .. temp_root:gsub("'", "'\\''") .. "'")
+remove_dir(temp_root)
 if #failures > 0 then
   for _, failure in ipairs(failures) do io.stderr:write("FAIL: " .. failure .. "\n") end
   io.stderr:write(string.format("%d/%d Lua regression checks failed\n", #failures, checks))
