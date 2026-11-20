@@ -165,4 +165,45 @@ return function(T)
     load_tool(2)
     T.contains(T.console_text(), "Significant misalignment", ">=5ms")
   end)
+
+  T.test("phase.live.playrate_2x_and_late_120ms_and_minus30db_in_real_host", function()
+    load_tool(0)
+    local tr1 = T.add_track("Rate2x")
+    local item1, take1 = T.add_item(tr1, wav("rate60", 1, 2880, 0.8), 1.0) -- click at 60ms
+    reaper.SetMediaItemTakeInfo_Value(take1, "D_PLAYRATE", 2.0)
+    local t_rate = _G.SGMPhaseAlignment.findFirstTransient(item1)
+    T.near(t_rate, 1.030, 0.002, "2x playrate shifts 60ms click to ~30ms in real REAPER accessor")
+
+    local tr2 = T.add_track("Late120")
+    local item2 = T.add_item(tr2, wav("late120", 1, 5760, 0.9), 1.0) -- click at 120ms (>100ms window)
+    local t_late = _G.SGMPhaseAlignment.findFirstTransient(item2)
+    T.eq(t_late, nil, "120ms transient outside 100ms window returns nil in real host")
+
+    local tr3 = T.add_track("Quiet30")
+    local item3 = T.add_item(tr3, wav("quiet30", 1, 960, 0.0316), 1.0) -- -30dBFS
+    local t_quiet, p_quiet = _G.SGMPhaseAlignment.findFirstTransient(item3)
+    T.eq(t_quiet, nil, "-30dB transient below 0.3 threshold returns nil in real host")
+    T.near(p_quiet, 0.0316, 0.005, "-30dB peak measured accurately in real host")
+  end)
+
+  T.test("phase.live.polarity_inverted_pair_aligns_and_surfaces_preflight_warnings", function()
+    local a, b = T.add_track("Pos"), T.add_track("Neg")
+    local ia = T.add_item(a, wav("pol_p", 1, 720, 0.8), 1.0) -- +0.8 at 15ms
+    reaper.AddTakeToMediaItem(ia) -- second take to trigger multi-take pre-flight warning
+    reaper.SetActiveTake(reaper.GetMediaItemTake(ia, 0))
+    local ib = T.add_item(b, wav("pol_n", 1, 2880, -0.8), 1.0) -- -0.8 at 60ms
+    T.select_only_tracks({a, b})
+    load_tool(0)
+    _G.SGMPhaseAlignment.alignSelectedTracks()
+    T.eq(#T.dialogs, 1, "one confirmation dialog")
+    T.contains(T.dialogs[1].text, "Opposite transient polarity", "polarity warning surfaced before confirm")
+    T.contains(T.dialogs[1].text, "2 takes", "multi-take warning surfaced before confirm")
+    T.contains(T.dialogs[1].text, "100ms", "100ms window disclosed before confirm")
+    T.near(T.item_pos(ib), 0.955, 1e-4, "late inverted track moved by -45ms")
+    local ta, _, pa = _G.SGMPhaseAlignment.findFirstTransient(ia)
+    local tb, _, pb = _G.SGMPhaseAlignment.findFirstTransient(ib)
+    T.near(ta, tb, TOL, "polarity-inverted pair transients coincide post-alignment")
+    T.eq(pa, 1, "track A positive polarity")
+    T.eq(pb, -1, "track B negative polarity")
+  end)
 end

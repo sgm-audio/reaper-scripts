@@ -46,9 +46,43 @@ local function getTrackItems(track)
   return items
 end
 
+local function inspectTakeConfiguration(item, take)
+  local take_count = (reaper.CountTakes and item) and reaper.CountTakes(item) or 1
+  local start_offs = 0.0
+  local playrate = 1.0
+  if take and reaper.GetMediaItemTakeInfo_Value then
+    local raw_offs = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+    if type(raw_offs) == "number" then
+      start_offs = raw_offs
+    end
+    local raw_rate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+    if type(raw_rate) == "number" then
+      playrate = raw_rate
+    end
+  end
+  if playrate <= 0 then
+    return {
+      valid = false,
+      reason = string.format("unsupported take playrate (%.4f)", playrate),
+      take_count = take_count,
+      start_offs = start_offs,
+      playrate = playrate,
+    }
+  end
+  return {
+    valid = true,
+    take_count = take_count,
+    start_offs = start_offs,
+    playrate = playrate,
+  }
+end
+
 local function findFirstTransient(item)
   local take = reaper.GetActiveTake(item)
   if not take then return nil end
+
+  local take_cfg = inspectTakeConfiguration(item, take)
+  if not take_cfg.valid then return nil end
 
   local source = reaper.GetMediaItemTake_Source(take)
   if not source then return nil end
@@ -57,7 +91,8 @@ local function findFirstTransient(item)
 
   if not sample_rate or sample_rate <= 0 or not num_channels or num_channels <= 0 then return nil end
 
-  -- Get audio accessor
+  -- Get audio accessor (REAPER's take audio accessor applies D_STARTOFFS and D_PLAYRATE
+  -- in item-timeline seconds relative to D_POSITION).
   local accessor = reaper.CreateTakeAudioAccessor(take)
   if not accessor then return nil end
   local start_time = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
@@ -89,19 +124,28 @@ local function findFirstTransient(item)
   end
 
   -- The requested frames are interleaved across channels.
-  -- Record the first frame exceeding threshold and scan the entire window for true peak.
+  -- Record the first frame exceeding threshold (and its polarity) and scan the entire window for true peak.
   local transient_frame = nil
+  local transient_polarity = nil
   local peak_value = 0
   for frame = 0, samples_to_analyze - 1 do
+    local frame_best_abs = 0
+    local frame_best_raw = nil
     for channel = 0, num_channels - 1 do
       local buffer_index = frame * num_channels + channel + 1
-      local sample_value = math.abs(audio_buffer[buffer_index])
+      local raw_sample = audio_buffer[buffer_index]
+      local sample_value = math.abs(raw_sample)
       if sample_value > peak_value then
         peak_value = sample_value
       end
-      if not transient_frame and sample_value > CONFIG.transient_threshold then
-        transient_frame = frame
+      if not transient_frame and sample_value > CONFIG.transient_threshold and sample_value > frame_best_abs then
+        frame_best_abs = sample_value
+        frame_best_raw = raw_sample
       end
+    end
+    if not transient_frame and frame_best_raw ~= nil then
+      transient_frame = frame
+      transient_polarity = frame_best_raw >= 0 and 1 or -1
     end
   end
 
@@ -109,9 +153,9 @@ local function findFirstTransient(item)
 
   if transient_frame then
     local transient_time = start_time + accessor_start + (transient_frame / sample_rate)
-    return transient_time, peak_value
+    return transient_time, peak_value, transient_polarity
   else
-    return nil, peak_value
+    return nil, peak_value, nil
   end
 end
 
@@ -140,52 +184,121 @@ local function alignSelectedTracks()
 
   reaper.ShowConsoleMsg("Analyzing " .. #tracks .. " selected tracks...\n\n")
 
-  -- Step 1: Find transients in all tracks
+  -- Step 1: Pre-flight validation and transient analysis across selected tracks
   local track_data = {}
+  local preflight_warnings = {}
   local earliest_transient = nil
   local latest_transient = nil
+  local detected_count = 0
+  local seen_pos_polarity = false
+  local seen_neg_polarity = false
 
   for i, track in ipairs(tracks) do
     local _, track_name = reaper.GetTrackName(track)
+    track_name = (track_name and track_name ~= "") and track_name or ("Track " .. i)
     local items = getTrackItems(track)
 
     if #items > 0 then
+      if #items > 1 then
+        local multi_item_warn = string.format(
+          "Track '%s' has %d items; only the first item is analyzed and moved",
+          track_name, #items)
+        table.insert(preflight_warnings, multi_item_warn)
+        reaper.ShowConsoleMsg("  ⚠ " .. multi_item_warn .. "\n")
+      end
+
       local first_item = items[1]
-      local item_pos = reaper.GetMediaItemInfo_Value(first_item, "D_POSITION")
-      local transient_time, peak = findFirstTransient(first_item)
-
-      table.insert(track_data, {
-        track = track,
-        name = track_name,
-        item = first_item,
-        item_pos = item_pos,
-        transient_time = transient_time,
-        peak = peak
-      })
-
-      if transient_time then
-        reaper.ShowConsoleMsg(string.format("  Track %d (%s): Transient at %.4fs (peak: %.2f)\n",
-          i, track_name, transient_time, peak))
-
-        if not earliest_transient or transient_time < earliest_transient then
-          earliest_transient = transient_time
-        end
-        if not latest_transient or transient_time > latest_transient then
-          latest_transient = transient_time
-        end
+      local active_take = reaper.GetActiveTake(first_item)
+      local take_cfg = active_take and inspectTakeConfiguration(first_item, active_take) or nil
+      if not active_take then
+        local no_take_warn = string.format("Track '%s': first item has no active take (skipped)", track_name)
+        table.insert(preflight_warnings, no_take_warn)
+        reaper.ShowConsoleMsg(string.format("  Track %d (%s): No active take (skipped)\n", i, track_name))
+      elseif not take_cfg.valid then
+        local bad_cfg_warn = string.format("Track '%s': %s (skipped)", track_name, take_cfg.reason)
+        table.insert(preflight_warnings, bad_cfg_warn)
+        reaper.ShowConsoleMsg(string.format("  Track %d (%s): Unsupported take configuration: %s\n",
+          i, track_name, take_cfg.reason))
       else
-        reaper.ShowConsoleMsg(string.format("  Track %d (%s): No transient found (try lowering the threshold)\n",
-          i, track_name))
+        if take_cfg.take_count > 1 then
+          local multi_take_warn = string.format(
+            "Track '%s' first item has %d takes; only active take is analyzed (D_POSITION shifts all takes)",
+            track_name, take_cfg.take_count)
+          table.insert(preflight_warnings, multi_take_warn)
+          reaper.ShowConsoleMsg("  ⚠ " .. multi_take_warn .. "\n")
+        end
+        if math.abs(take_cfg.playrate - 1.0) > 1e-6 then
+          local rate_warn = string.format(
+            "Track '%s' active take playrate is %.3fx (time-stretched; verify phase manually)",
+            track_name, take_cfg.playrate)
+          table.insert(preflight_warnings, rate_warn)
+          reaper.ShowConsoleMsg("  ⚠ " .. rate_warn .. "\n")
+        end
+        if math.abs(take_cfg.start_offs) > 1e-9 then
+          reaper.ShowConsoleMsg(string.format(
+            "  ℹ Track %d (%s): take D_STARTOFFS %.4fs honored via audio accessor\n",
+            i, track_name, take_cfg.start_offs))
+        end
+
+        local item_pos = reaper.GetMediaItemInfo_Value(first_item, "D_POSITION")
+        local transient_time, peak, polarity = findFirstTransient(first_item)
+
+        table.insert(track_data, {
+          track = track,
+          name = track_name,
+          item = first_item,
+          item_pos = item_pos,
+          transient_time = transient_time,
+          peak = peak,
+          polarity = polarity,
+        })
+
+        if transient_time then
+          detected_count = detected_count + 1
+          if polarity == 1 then seen_pos_polarity = true
+          elseif polarity == -1 then seen_neg_polarity = true end
+          local pol_label = polarity == -1 and "-" or "+"
+          reaper.ShowConsoleMsg(string.format("  Track %d (%s): Transient at %.4fs (peak: %.2f, polarity: %s)\n",
+            i, track_name, transient_time, peak, pol_label))
+
+          if not earliest_transient or transient_time < earliest_transient then
+            earliest_transient = transient_time
+          end
+          if not latest_transient or transient_time > latest_transient then
+            latest_transient = transient_time
+          end
+        else
+          local no_tr_warn = string.format(
+            "Track '%s': no transient > %.2f within first %.0fms window (peak: %.3f, skipped)",
+            track_name, CONFIG.transient_threshold, CONFIG.analysis_window * 1000, peak or 0)
+          table.insert(preflight_warnings, no_tr_warn)
+          reaper.ShowConsoleMsg(string.format("  Track %d (%s): %s\n", i, track_name, no_tr_warn))
+        end
       end
     else
+      local no_item_warn = string.format("Track '%s': no media items (skipped)", track_name)
+      table.insert(preflight_warnings, no_item_warn)
       reaper.ShowConsoleMsg(string.format("  Track %d (%s): No items found\n", i, track_name))
     end
   end
 
-  if not earliest_transient then
+  if detected_count == 0 then
     reaper.ShowConsoleMsg("\n❌ No transients detected in any track\n")
     reaper.ShowConsoleMsg("   Try lowering the threshold or checking your audio\n")
     return
+  end
+
+  if detected_count < 2 then
+    reaper.ShowConsoleMsg(string.format(
+      "\n❌ Only %d track had a transient within the first %.0fms window; at least 2 tracks are required to align\n",
+      detected_count, CONFIG.analysis_window * 1000))
+    return
+  end
+
+  if seen_pos_polarity and seen_neg_polarity then
+    local pol_warn = "Opposite transient polarity (+ vs -) detected: onset alignment adjusts timing only and does NOT invert polarity"
+    table.insert(preflight_warnings, pol_warn)
+    reaper.ShowConsoleMsg("\n⚠ " .. pol_warn .. "\n")
   end
 
   -- Avoid clamping items at 0.0s: if shifting left to earliest_transient would
@@ -215,10 +328,23 @@ local function alignSelectedTracks()
     return
   end
 
-  local answer = reaper.ShowMessageBox(
+  local confirm_lines = {
     string.format("Align %d track(s) (first item per track) to %s transient at %.4fs?",
       #planned_moves, target_label, target_time),
-    "Phase Alignment", 1)
+    "",
+    string.format(
+      "Scope: first item per track, first %.0fms analysis window, threshold-based onset alignment only (not waveform cross-correlation; does not invert polarity).",
+      CONFIG.analysis_window * 1000),
+  }
+  if #preflight_warnings > 0 then
+    table.insert(confirm_lines, "")
+    table.insert(confirm_lines, "Pre-flight warnings:")
+    for _, warning in ipairs(preflight_warnings) do
+      table.insert(confirm_lines, "- " .. warning)
+    end
+  end
+
+  local answer = reaper.ShowMessageBox(table.concat(confirm_lines, "\n"), "Phase Alignment", 1)
   if answer ~= 1 then
     reaper.ShowConsoleMsg("Phase alignment cancelled.\n")
     return
@@ -428,6 +554,8 @@ local function showMenu()
 end
 
 _G.SGMPhaseAlignment = {
+  CONFIG = CONFIG,
+  inspectTakeConfiguration = inspectTakeConfiguration,
   findFirstTransient = findFirstTransient,
   alignSelectedTracks = alignSelectedTracks,
 }

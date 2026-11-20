@@ -873,4 +873,299 @@ check(row4_win:find("python -m demucs", 1, true) ~= nil,
   "AI Hub row 4 on Win64 saved project must print python command")
 remove_dir(hub_temp)
 
+-- phase-alignment-tool.lua: deterministic synthetic WAV fixtures, D_STARTOFFS / D_PLAYRATE / multi-take / polarity / edge cases
+local wav_temp = os.tmpname()
+os.remove(wav_temp)
+make_dir(wav_temp)
+
+local WAV_RATE = 48000
+local WAV_FRAMES = 9600 -- 200ms @ 48kHz
+local WAV_TOL = 1.0 / WAV_RATE
+
+local function write_pcm16_wav(path, rate, nframes, nch, click_frame, click_ch, amp, width)
+  width = width or 24
+  local parts = {}
+  for f = 0, nframes - 1 do
+    for c = 1, nch do
+      local v = 0.0
+      if c == click_ch and click_frame >= 0 and f >= click_frame and f < click_frame + width then
+        v = amp
+      end
+      v = math.max(-1.0, math.min(1.0, v))
+      parts[#parts + 1] = string.pack("<i2", math.floor(v * 32767 + (v >= 0 and 0.5 or -0.5)))
+    end
+  end
+  local pcm = table.concat(parts)
+  local header = "RIFF" .. string.pack("<I4", 36 + #pcm) .. "WAVEfmt " ..
+    string.pack("<I4I2I2I4I4I2I2", 16, 1, nch, rate, rate * nch * 2, nch * 2, 16) ..
+    "data" .. string.pack("<I4", #pcm)
+  write_all(path, header .. pcm)
+  return path
+end
+
+local function parse_pcm16_wav(path)
+  local raw = assert(read_all(path), "missing WAV fixture: " .. path)
+  assert(raw:sub(1, 4) == "RIFF" and raw:sub(9, 12) == "WAVE", "invalid RIFF/WAVE header")
+  local _, nch, rate, _, _, bits = string.unpack("<I2I2I4I4I2I2", raw, 21)
+  assert(bits == 16, "expected 16-bit PCM")
+  local data_size = string.unpack("<I4", raw, 41)
+  local total_samples = data_size // 2
+  local total_frames = total_samples // nch
+  local samples = {}
+  local pos = 45
+  for i = 1, total_samples do
+    local s
+    s, pos = string.unpack("<i2", raw, pos)
+    samples[i] = s / 32767.0
+  end
+  return {rate = rate, channels = nch, frames = total_frames, samples = samples}
+end
+
+-- Generate deterministic synthetic WAV fixtures on disk
+local wav_mono_15 = write_pcm16_wav(wav_temp .. "/mono_15ms.wav", WAV_RATE, WAV_FRAMES, 1, 720, 1, 0.80)
+local wav_stereo_60 = write_pcm16_wav(wav_temp .. "/stereo_60ms_ch2.wav", WAV_RATE, WAV_FRAMES, 2, 2880, 2, 0.85)
+local wav_quad_15 = write_pcm16_wav(wav_temp .. "/quad_15ms_ch4.wav", WAV_RATE, WAV_FRAMES, 4, 720, 4, -0.75)
+local wav_late_120 = write_pcm16_wav(wav_temp .. "/mono_120ms_late.wav", WAV_RATE, WAV_FRAMES, 1, 5760, 1, 0.90)
+local wav_pol_pos_15 = write_pcm16_wav(wav_temp .. "/pol_pos_15ms.wav", WAV_RATE, WAV_FRAMES, 1, 720, 1, 0.80)
+local wav_pol_neg_60 = write_pcm16_wav(wav_temp .. "/pol_neg_60ms.wav", WAV_RATE, WAV_FRAMES, 1, 2880, 1, -0.80)
+local minus_30db = 10 ^ (-30 / 20) -- ~0.0316228 (< 0.3 threshold)
+local wav_quiet_30db = write_pcm16_wav(wav_temp .. "/quiet_minus30db.wav", WAV_RATE, WAV_FRAMES, 1, 960, 1, minus_30db)
+
+local dsp_env = environment()
+local dsp_console, dsp_dialogs = {}, {}
+local dsp_undo, dsp_refresh = 0, 0
+local dsp_selected_tracks = {}
+local dsp_force_nil_accessor = false
+local dsp_destroyed = 0
+
+local function make_wav_item(wav_path, pos, opts)
+  opts = opts or {}
+  local parsed = parse_pcm16_wav(wav_path)
+  local take = {
+    source = parsed,
+    start_offs = opts.start_offs or 0.0,
+    playrate = opts.playrate ~= nil and opts.playrate or 1.0,
+  }
+  return {
+    pos = pos or 0.0,
+    active_take = opts.no_take and nil or take,
+    take_count = opts.take_count or 1,
+  }
+end
+
+dsp_env.reaper.ShowConsoleMsg = function(m) table.insert(dsp_console, tostring(m)) end
+dsp_env.reaper.ShowMessageBox = function(text, title, _)
+  table.insert(dsp_dialogs, {text = text, title = title})
+  return 1
+end
+dsp_env.reaper.CountSelectedTracks = function() return #dsp_selected_tracks end
+dsp_env.reaper.GetSelectedTrack = function(_, idx) return dsp_selected_tracks[idx + 1] end
+dsp_env.reaper.GetTrackName = function(tr) return true, tr.name end
+dsp_env.reaper.CountTrackMediaItems = function(tr) return #tr.items end
+dsp_env.reaper.GetTrackMediaItem = function(tr, idx) return tr.items[idx + 1] end
+dsp_env.reaper.CountTakes = function(item) return item.take_count or 1 end
+dsp_env.reaper.GetActiveTake = function(item) return item.active_take end
+dsp_env.reaper.GetMediaItemTakeInfo_Value = function(take, key)
+  if key == "D_STARTOFFS" then return take.start_offs or 0.0 end
+  if key == "D_PLAYRATE" then return take.playrate end
+  return 0.0
+end
+dsp_env.reaper.GetMediaItemTake_Source = function(take) return take.source end
+dsp_env.reaper.GetMediaSourceSampleRate = function(src) return src.rate end
+dsp_env.reaper.GetMediaSourceNumChannels = function(src) return src.channels end
+dsp_env.reaper.GetMediaItemInfo_Value = function(item, _) return item.pos end
+dsp_env.reaper.SetMediaItemInfo_Value = function(item, _, val) item.pos = val end
+dsp_env.reaper.CreateTakeAudioAccessor = function(take)
+  if dsp_force_nil_accessor then return nil end
+  return {take = take}
+end
+dsp_env.reaper.DestroyAudioAccessor = function() dsp_destroyed = dsp_destroyed + 1 end
+dsp_env.reaper.GetAudioAccessorStartTime = function() return 0.0 end
+dsp_env.reaper.GetAudioAccessorEndTime = function(acc)
+  local src = acc.take.source
+  local rem = (src.frames / src.rate) - (acc.take.start_offs or 0.0)
+  local rate = acc.take.playrate or 1.0
+  return math.max(0.0, rem / rate)
+end
+dsp_env.reaper.new_array = function(n)
+  local b = {}
+  for i = 1, n do b[i] = 0 end
+  return b
+end
+dsp_env.reaper.GetAudioAccessorSamples = function(acc, rate, nch, start_sec, frames, buf)
+  local take = acc.take
+  local src = take.source
+  local start_offs = take.start_offs or 0.0
+  local playrate = take.playrate or 1.0
+  for f = 0, frames - 1 do
+    local t_item = start_sec + (f / rate)
+    local t_src = start_offs + (t_item * playrate)
+    local src_frame = math.floor(t_src * src.rate + 0.5)
+    for c = 0, nch - 1 do
+      local val = 0.0
+      if src_frame >= 0 and src_frame < src.frames then
+        val = src.samples[src_frame * src.channels + c + 1] or 0.0
+      end
+      buf[f * nch + c + 1] = val
+    end
+  end
+  return 1
+end
+dsp_env.reaper.Undo_BeginBlock = function() dsp_undo = dsp_undo + 1 end
+dsp_env.reaper.Undo_EndBlock = function() dsp_undo = dsp_undo - 1 end
+dsp_env.reaper.PreventUIRefresh = function(d) dsp_refresh = dsp_refresh + d end
+dsp_env.reaper.UpdateArrange = function() end
+
+load_script("phase-alignment-tool.lua", dsp_env)
+local PA = dsp_env.SGMPhaseAlignment
+
+-- 1) Ground-truth synthetic WAV transient detection across mono, stereo ch2, 4ch ch4, >100ms, -30dB
+local t_mono, p_mono, pol_mono = PA.findFirstTransient(make_wav_item(wav_mono_15, 2.0))
+check(t_mono and math.abs(t_mono - 2.015) <= WAV_TOL and math.abs(p_mono - 0.80) < 0.002 and pol_mono == 1,
+  "mono 15ms WAV fixture must detect 2.015s, peak ~0.80, polarity +1")
+
+local t_st, p_st, pol_st = PA.findFirstTransient(make_wav_item(wav_stereo_60, 1.0))
+check(t_st and math.abs(t_st - 1.060) <= WAV_TOL and math.abs(p_st - 0.85) < 0.002 and pol_st == 1,
+  "stereo 60ms ch2 WAV fixture must detect 1.060s, peak ~0.85, polarity +1")
+
+local t_q4, p_q4, pol_q4 = PA.findFirstTransient(make_wav_item(wav_quad_15, 0.5))
+check(t_q4 and math.abs(t_q4 - 0.515) <= WAV_TOL and math.abs(p_q4 - 0.75) < 0.002 and pol_q4 == -1,
+  "4-channel 15ms ch4 negative WAV fixture must detect 0.515s, peak ~0.75, polarity -1")
+
+local t_late, p_late = PA.findFirstTransient(make_wav_item(wav_late_120, 1.0))
+check(t_late == nil and p_late == 0,
+  "WAV transient at 120ms (>100ms window) must return nil and peak 0")
+
+local t_quiet, p_quiet = PA.findFirstTransient(make_wav_item(wav_quiet_30db, 1.0))
+check(t_quiet == nil and math.abs(p_quiet - minus_30db) < 0.002,
+  "quiet -30dB WAV transient must return nil with accurate ~0.0316 peak")
+
+-- 2) D_STARTOFFS, D_PLAYRATE, combined offset+playrate, and invalid playrate <= 0 guard
+local t_offs = PA.findFirstTransient(make_wav_item(wav_stereo_60, 3.0, {start_offs = 0.025}))
+check(t_offs and math.abs(t_offs - 3.035) <= WAV_TOL,
+  "D_STARTOFFS=0.025 on 60ms click must detect 3.035s")
+
+local t_rate = PA.findFirstTransient(make_wav_item(wav_stereo_60, 1.0, {playrate = 2.0}))
+check(t_rate and math.abs(t_rate - 1.030) <= WAV_TOL,
+  "D_PLAYRATE=2.0 on 60ms click must detect 1.030s")
+
+local t_both = PA.findFirstTransient(make_wav_item(wav_stereo_60, 4.0, {start_offs = 0.020, playrate = 2.0}))
+check(t_both and math.abs(t_both - 4.020) <= WAV_TOL,
+  "D_STARTOFFS=0.020 + D_PLAYRATE=2.0 on 60ms click must detect 4.020s")
+
+for _, bad_rate in ipairs({0.0, -1.0}) do
+  local cfg = PA.inspectTakeConfiguration({}, {playrate = bad_rate})
+  check(cfg.valid == false, "inspectTakeConfiguration must reject D_PLAYRATE <= 0 (" .. tostring(bad_rate) .. ")")
+  check(PA.findFirstTransient(make_wav_item(wav_mono_15, 1.0, {playrate = bad_rate})) == nil,
+    "findFirstTransient must reject D_PLAYRATE <= 0 without reading")
+end
+
+-- 3) Polarity-inverted pair alignment math + pre-flight warnings & physical limitations disclosure
+local item_pos = make_wav_item(wav_pol_pos_15, 1.0)
+local item_neg = make_wav_item(wav_pol_neg_60, 1.0)
+dsp_selected_tracks = {
+  {name = "DI Pos", items = {item_pos}},
+  {name = "DI Neg", items = {item_neg}},
+}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+check(math.abs(item_pos.pos - 1.0) < 1e-9 and math.abs(item_neg.pos - 0.955) <= WAV_TOL,
+  "polarity-inverted 15ms vs 60ms pair must move late item by exact -0.045s")
+local aligned_t1 = PA.findFirstTransient(item_pos)
+local aligned_t2 = PA.findFirstTransient(item_neg)
+check(math.abs(aligned_t1 - aligned_t2) <= WAV_TOL,
+  "post-alignment transients of polarity-inverted pair must coincide within 1 sample")
+local pol_dialog = dsp_dialogs[#dsp_dialogs] and dsp_dialogs[#dsp_dialogs].text or ""
+check(pol_dialog:find("Opposite transient polarity", 1, true) ~= nil,
+  "confirmation dialog must warn about opposite transient polarity (+ vs -)")
+check(pol_dialog:find("first item per track", 1, true) ~= nil and
+      pol_dialog:find("100ms", 1, true) ~= nil and
+      pol_dialog:find("not waveform cross-correlation", 1, true) ~= nil,
+  "confirmation dialog must disclose physical limitations (first item, 100ms window, onset-only)")
+check(dsp_undo == 0 and dsp_refresh == 0, "polarity pair alignment must balance undo and PreventUIRefresh")
+
+-- 4) Pre-flight warnings for multi-take item, multi-item track, non-unity playrate, and 0-item track
+local mt_a = make_wav_item(wav_mono_15, 1.0, {take_count = 3})
+local mt_a_extra = make_wav_item(wav_mono_15, 5.0)
+local mt_b = make_wav_item(wav_stereo_60, 1.0, {playrate = 2.0}) -- 30ms effective transient -> -15ms move
+dsp_selected_tracks = {
+  {name = "MultiTake", items = {mt_a, mt_a_extra}},
+  {name = "Stretched", items = {mt_b}},
+  {name = "EmptyTrack", items = {}},
+}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+local pf_dialog = dsp_dialogs[#dsp_dialogs] and dsp_dialogs[#dsp_dialogs].text or ""
+check(pf_dialog:find("3 takes", 1, true) ~= nil,
+  "pre-flight confirmation must warn about multi-take item")
+check(pf_dialog:find("has 2 items", 1, true) ~= nil,
+  "pre-flight confirmation must warn about multi-item track (first item only)")
+check(pf_dialog:find("playrate is 2.000x", 1, true) ~= nil,
+  "pre-flight confirmation must warn about non-unity take playrate")
+check(pf_dialog:find("no media items", 1, true) ~= nil,
+  "pre-flight confirmation must warn about 0-item track")
+check(math.abs(mt_b.pos - 0.985) <= WAV_TOL and math.abs(mt_a_extra.pos - 5.0) < 1e-9,
+  "multi-take/playrate alignment must shift Stretched by exact -0.015s and leave 2nd item untouched")
+
+-- 5) Required edge cases: 0 tracks, 1 track, 0 items, nil CreateTakeAudioAccessor, within CONFIG.alignment_precision
+-- Edge A: 0 tracks selected
+dsp_selected_tracks = {}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+check(#dsp_dialogs == 1 and dsp_dialogs[1].title:find("No Tracks Selected", 1, true) ~= nil and dsp_undo == 0,
+  "0 selected tracks must warn and not open undo")
+
+-- Edge B: 1 track selected
+local solo_item = make_wav_item(wav_mono_15, 2.0)
+dsp_selected_tracks = {{name = "Solo", items = {solo_item}}}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+check(#dsp_dialogs == 1 and math.abs(solo_item.pos - 2.0) < 1e-9 and dsp_undo == 0,
+  "1 selected track must warn, not mutate item, and not open undo")
+
+-- Edge C: 2 tracks where one has 0 items -> fewer than 2 detected transients, no mutation, no dialog
+local one_audio = make_wav_item(wav_mono_15, 2.0)
+dsp_selected_tracks = {
+  {name = "HasAudio", items = {one_audio}},
+  {name = "NoItems", items = {}},
+}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+check(#dsp_dialogs == 0 and math.abs(one_audio.pos - 2.0) < 1e-9 and dsp_undo == 0,
+  "track with 0 items leaving <2 transients must not prompt or mutate")
+check(table.concat(dsp_console):find("No items found", 1, true) ~= nil,
+  "0-item track must be reported to console")
+
+-- Edge D: CreateTakeAudioAccessor returns nil -> safe nil return, no crash, no mutation
+dsp_force_nil_accessor = true
+local nil_acc_item = make_wav_item(wav_mono_15, 1.0)
+local nil_acc_before = dsp_destroyed
+check(PA.findFirstTransient(nil_acc_item) == nil and dsp_destroyed == nil_acc_before,
+  "nil CreateTakeAudioAccessor must return nil without calling DestroyAudioAccessor")
+dsp_selected_tracks = {
+  {name = "NilA", items = {nil_acc_item}},
+  {name = "NilB", items = {make_wav_item(wav_stereo_60, 1.0)}},
+}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+check(#dsp_dialogs == 0 and math.abs(nil_acc_item.pos - 1.0) < 1e-9 and dsp_undo == 0,
+  "nil accessor on all tracks must refuse alignment safely")
+dsp_force_nil_accessor = false
+
+-- Edge E: All transients within CONFIG.alignment_precision (0.05ms < 0.1ms) -> no dialog, no move, no undo
+local prec_a = make_wav_item(wav_mono_15, 1.00000)
+local prec_b = make_wav_item(wav_mono_15, 1.00005) -- 0.05ms difference < 0.0001s precision
+dsp_selected_tracks = {
+  {name = "PrecA", items = {prec_a}},
+  {name = "PrecB", items = {prec_b}},
+}
+dsp_console, dsp_dialogs = {}, {}
+PA.alignSelectedTracks()
+check(#dsp_dialogs == 0 and math.abs(prec_a.pos - 1.0) < 1e-9 and math.abs(prec_b.pos - 1.00005) < 1e-9 and dsp_undo == 0,
+  "transients within CONFIG.alignment_precision must not prompt, move, or open undo")
+check(table.concat(dsp_console):find("already aligned", 1, true) ~= nil,
+  "within-precision alignment must log already aligned")
+
+remove_dir(wav_temp)
+
 print(string.format("All %d API contract checks passed", checks))
