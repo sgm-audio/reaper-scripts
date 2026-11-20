@@ -34,7 +34,7 @@ local function get_saved_project_dir()
             return ""
         end
     end
-    return reaper.GetProjectPath() or ""
+    return reaper.GetProjectPath("") or ""
 end
 
 -- AI Plugin Bridge System
@@ -104,7 +104,7 @@ end
 
 function AIPluginBridge:_detect_plugin_type(fx_index)
     -- REAPER reports FX names with a format prefix ("VST3: ", "VST: ", "CLAP: ", "JS: ", ...),
-    -- not a file extension, so classify on that prefix first.
+    -- not a file extension, so classify on that prefix first, then fall back to extension.
     local master_track = reaper.GetMasterTrack(0)
     if not master_track then
         return "Unknown"
@@ -113,8 +113,14 @@ function AIPluginBridge:_detect_plugin_type(fx_index)
     if not retval or not fx_name then
         return "Unknown"
     end
+    local prefix = fx_name:match("^(%a+%d*)i?:")
+    local by_prefix = {VST3 = "VST3", VST = "VST2", CLAP = "CLAP", AU = "AU", JS = "JSFX", LV2 = "LV2"}
+    if prefix then
+        local base = prefix:gsub("[iI]$", "")
+        if by_prefix[prefix] then return by_prefix[prefix] end
+        if by_prefix[base] then return by_prefix[base] end
+    end
     local lower_name = fx_name:lower()
-
     if lower_name:match("^vst3i?:") or lower_name:find(".vst3", 1, true) then
         return "VST3"
     elseif lower_name:match("^vsti?:") or lower_name:find(".vst", 1, true) then
@@ -413,24 +419,21 @@ function ExternalToolLauncher:_export_track_stems(track, track_name, export_dir,
 end
 
 function ExternalToolLauncher:_get_tool_config(tool_type, project_path)
-    local os_type = reaper.GetOS() or ""
-    local is_win = os_type == "Win32" or os_type == "Win64"
-    local ext = is_win and ".exe" or ""
     local configs = {
         stem_separation = {
-            executable = is_win and "python" or "python3",
+            executable = "python",
             args = "-m demucs",
             working_dir = project_path or get_saved_project_dir(),
             name = "Demucs Stem Separator"
         },
         mastering = {
-            executable = "omnibridge" .. ext,
+            executable = "omnibridge.exe", 
             args = "--mastering-mode",
             working_dir = "",
             name = "OmniBridge Mastering"
         },
         analysis = {
-            executable = "ai_analyzer" .. ext,
+            executable = "ai_analyzer.exe",
             args = "--batch-analysis",
             working_dir = "",
             name = "AI Audio Analyzer"

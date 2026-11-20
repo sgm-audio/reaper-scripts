@@ -51,13 +51,11 @@ function PluginScanner:detectCategory(name)
   else return "Utility" end
 end
 
--- REAPER identifies JSFX by content ("desc:" header), not extension: stock/third-party
+-- REAPER treats any file in Effects/ whose header has a "desc:" line as JSFX, and JSFX
 -- names may contain dots ("Auto-Wideness v1.0"), so an extension test alone is wrong.
 -- Fall back to the name when the file cannot be opened.
-local NON_JSFX_EXTENSIONS = {
-  txt = true, md = true, png = true, jpg = true, wav = true, zip = true,
-  lua = true, ini = true, rpl = true, pdf = true, html = true, jsfx_inc = true,
-}
+local NON_JSFX_EXTENSIONS = {txt = true, md = true, png = true, jpg = true, wav = true, zip = true,
+  lua = true, ini = true, rpl = true, pdf = true, html = true, jsfx_inc = true}
 
 function PluginScanner:isJSFXFile(full_path, filename)
   local handle = io.open(full_path, "rb")
@@ -131,12 +129,10 @@ function PluginScanner:parseCache(ini_path, fallback_type)
           local name = remainder and trim(remainder) or nil
           if name then
             local is_instrument = false
-            -- REAPER appends "!!!VSTi" / "!!!VST3i" to instrument entries; it is not part of the name.
-            local stripped, markers = name:gsub("!!!VST3?i$", "")
+            -- REAPER appends "!!!VSTi" to instrument entries; it is not part of the name.
+            local stripped, markers = name:gsub("!!!VSTi$", "")
             if markers > 0 then name, is_instrument = trim(stripped), true end
             name = name:gsub('^"(.*)"$', "%1"):gsub('""', '"')
-            stripped, markers = name:gsub("!!!VST3?i$", "")
-            if markers > 0 then name, is_instrument = trim(stripped), true end
             local plugin_type = plugin_type_from_path(key, fallback_type)
             table.insert(found, {
               name = name,

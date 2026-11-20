@@ -108,26 +108,32 @@ return function(T)
     T.contains(T.console_text(), "Select at least one track", "guidance message")
   end)
 
-  T.test("hub.live.external_processing_creates_export_dir_and_sanitizes_track_names", function()
+  T.test("hub.live.external_processing_requires_saved_project_and_sanitizes_names", function()
     load_hub(0)
     local tr = T.add_track('Gtr: L/R <DI>?')
     T.select_only_tracks({tr})
     local l = _G.ExternalToolLauncher:new()
+    -- Unsaved project: safely refuses instead of writing into default REAPER Media.
+    local unsaved_files = l:launch_external_processing(nil, "stem_separation")
+    T.eq(#unsaved_files, 0, "no files on unsaved project")
+    T.contains(T.console_text(), "Save the project", "unsaved project guidance")
+
+    -- Saved project: reports sanitised manual render target without claiming audio was rendered.
+    local tmp_dir = reaper.GetResourcePath() .. "/sgm_hub_test_proj"
+    reaper.RecursiveCreateDirectory(tmp_dir, 0)
+    local rpp = tmp_dir .. "/test.rpp"
+    local fh = assert(io.open(rpp, "w"))
+    fh:write("<REAPER_PROJECT 0.1 \"7.0\"\n>\n")
+    fh:close()
+    reaper.Main_openProject("noprompt:" .. rpp)
+    tr = T.add_track('Gtr: L/R <DI>?')
+    T.select_only_tracks({tr})
+    T.reset_ui()
     local files = l:launch_external_processing(nil, "stem_separation")
     T.eq(#files, 0, "hub never claims files were rendered")
     local out = T.console_text()
-    T.contains(out, "Gtr_ L_R _DI___export.wav", "sanitised manual render target")
+    T.contains(out, "01_Gtr_ L_R _DI___export.wav", "sanitised manual render target")
     T.contains(out, "No audio was rendered automatically", "honest status")
-    local dir = reaper.GetProjectPath() .. "/external_ai_export"
-    local found = false
-    local i = 0
-    while true do
-      local sub = reaper.EnumerateSubdirectories(reaper.GetProjectPath(), i)
-      if not sub then break end
-      if sub == "external_ai_export" then found = true end
-      i = i + 1
-    end
-    T.ok(found, "export directory really exists on disk: " .. dir)
   end)
 
   T.test("hub.live.tool_paths_are_portable_and_include_resource_path", function()

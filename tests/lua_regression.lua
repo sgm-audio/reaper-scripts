@@ -10,8 +10,13 @@ end
 
 local temp_root = os.tmpname()
 os.remove(temp_root)
+local is_windows = package.config:sub(1, 1) == "\\"
 local function make_dir(path)
-  os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  if is_windows then
+    os.execute('mkdir "' .. tostring(path):gsub("/", "\\") .. '"')
+  else
+    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+  end
 end
 make_dir(temp_root .. "/Effects")
 
@@ -338,7 +343,11 @@ for _, filename in ipairs({
   end
 end
 
-os.execute("rm -rf '" .. temp_root:gsub("'", "'\\''") .. "'")
+if is_windows then
+  os.execute('rmdir /s /q "' .. temp_root:gsub("/", "\\") .. '"')
+else
+  os.execute("rm -rf '" .. temp_root:gsub("'", "'\\''") .. "'")
+end
 if #failures > 0 then
   for _, failure in ipairs(failures) do io.stderr:write("FAIL: " .. failure .. "\n") end
   io.stderr:write(string.format("%d/%d Lua regression checks failed\n", #failures, checks))

@@ -2,3 +2,4 @@
 numpy
 soundfile
 psutil
+pyaaf2
