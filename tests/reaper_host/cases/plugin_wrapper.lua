@@ -156,4 +156,49 @@ return function(T)
     local saved = T.read_file(res("plugin_database.json"))
     T.ok(saved and saved:find("Foo v2.5", 1, true), "scan persisted to the resource path")
   end)
+
+  T.test("wrapper.live.menu_rows_list_track_fx_and_export_database", function()
+    local w = W()
+    local tr = eq_instance(w, "ReaEQ")
+    T.select_only_tracks({tr})
+    T.reset_ui()
+    T.menu_choice = 2
+    w.showMenu()
+    T.contains(T.console_text(), "ReaEQ", "menu row 2 prints real track FX")
+    T.reset_ui()
+    os.remove(res("plugin_database.json"))
+    T.menu_choice = 4
+    w.showMenu()
+    T.ok(T.read_file(res("plugin_database.json")) ~= nil, "menu row 4 writes plugin_database.json")
+    T.ok(#T.dialogs >= 1 and T.dialogs[#T.dialogs].title == "Success", "menu row 4 shows Success dialog")
+  end)
+
+  T.test("wrapper.live.automateSelectedPlugin_real_reaeq_creates_21_points_and_single_step_undo", function()
+    local w = W()
+    local tr, _, idx = eq_instance(w, "ReaEQ")
+    reaper.Undo_OnStateChange("reaeq_fixture")
+    reaper.TrackFX_SetParam(tr, idx, 0, 0.5)
+    local real_last_touched = reaper.GetLastTouchedFX
+    local touched = real_last_touched()
+    if not touched then
+      -- Headless REAPER has no GUI click to update last-touched; point at the real Track 1 / ReaEQ FX 0 / param 0.
+      reaper.GetLastTouchedFX = function() return true, 1, idx, 0 end
+    end
+    T.dialog_answer = 1
+    local ok_call, res_auto = pcall(w.automateSelectedPlugin)
+    reaper.GetLastTouchedFX = real_last_touched
+    T.ok(ok_call, "automateSelectedPlugin did not error: " .. tostring(res_auto))
+    T.eq(res_auto, true, "automateSelectedPlugin succeeded on real ReaEQ")
+
+    local env = reaper.GetFXEnvelope(tr, idx, 0, false)
+    T.ok(env ~= nil, "real ReaEQ FX envelope created")
+    T.eq(reaper.CountEnvelopePoints(env), 21, "automateSelectedPlugin created exact 21 envelope points")
+    T.eq(reaper.Undo_CanUndo2(0), "SGM: Automate FX Parameter", "exact undo block label")
+
+    reaper.Undo_DoUndo2(0)
+    local tr_after = reaper.GetTrack(0, 0)
+    local env_after = reaper.GetFXEnvelope(tr_after, 0, 0, false)
+    local pts_after = env_after and reaper.CountEnvelopePoints(env_after) or 0
+    T.ok(pts_after < 21, "single-step undo removed the 21 automation points (remaining=" .. tostring(pts_after) .. ")")
+  end)
 end

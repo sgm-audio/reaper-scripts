@@ -165,4 +165,76 @@ return function(T)
     load_tool(2)
     T.contains(T.console_text(), "Significant misalignment", ">=5ms")
   end)
+
+  T.test("phase.live.playrate_2x_and_late_120ms_and_minus30db_in_real_host", function()
+    load_tool(0)
+    local tr1 = T.add_track("Rate2x")
+    local item1, take1 = T.add_item(tr1, wav("rate60", 1, 2880, 0.8), 1.0) -- click at 60ms
+    reaper.SetMediaItemTakeInfo_Value(take1, "D_PLAYRATE", 2.0)
+    local t_rate = _G.SGMPhaseAlignment.findFirstTransient(item1)
+    T.near(t_rate, 1.030, 0.002, "2x playrate shifts 60ms click to ~30ms in real REAPER accessor")
+
+    local tr2 = T.add_track("Late120")
+    local item2 = T.add_item(tr2, wav("late120", 1, 5760, 0.9), 1.0) -- click at 120ms (>100ms window)
+    local t_late = _G.SGMPhaseAlignment.findFirstTransient(item2)
+    T.eq(t_late, nil, "120ms transient outside 100ms window returns nil in real host")
+
+    local tr3 = T.add_track("Quiet30")
+    local item3 = T.add_item(tr3, wav("quiet30", 1, 960, 0.0316), 1.0) -- -30dBFS
+    local t_quiet, p_quiet = _G.SGMPhaseAlignment.findFirstTransient(item3)
+    T.eq(t_quiet, nil, "-30dB transient below 0.3 threshold returns nil in real host")
+    T.near(p_quiet, 0.0316, 0.005, "-30dB peak measured accurately in real host")
+  end)
+
+  T.test("phase.live.polarity_inverted_pair_aligns_and_surfaces_preflight_warnings", function()
+    local a, b = T.add_track("Pos"), T.add_track("Neg")
+    local ia = T.add_item(a, wav("pol_p", 1, 720, 0.8), 1.0) -- +0.8 at 15ms
+    reaper.AddTakeToMediaItem(ia) -- second take to trigger multi-take pre-flight warning
+    reaper.SetActiveTake(reaper.GetMediaItemTake(ia, 0))
+    local ib = T.add_item(b, wav("pol_n", 1, 2880, -0.8), 1.0) -- -0.8 at 60ms
+    T.select_only_tracks({a, b})
+    load_tool(0)
+    _G.SGMPhaseAlignment.alignSelectedTracks()
+    T.eq(#T.dialogs, 1, "one confirmation dialog")
+    T.contains(T.dialogs[1].text, "Opposite transient polarity", "polarity warning surfaced before confirm")
+    T.contains(T.dialogs[1].text, "2 takes", "multi-take warning surfaced before confirm")
+    T.contains(T.dialogs[1].text, "100ms", "100ms window disclosed before confirm")
+    T.near(T.item_pos(ib), 0.955, 1e-4, "late inverted track moved by -45ms")
+    local ta, _, pa = _G.SGMPhaseAlignment.findFirstTransient(ia)
+    local tb, _, pb = _G.SGMPhaseAlignment.findFirstTransient(ib)
+    T.near(ta, tb, TOL, "polarity-inverted pair transients coincide post-alignment")
+    T.eq(pa, 1, "track A positive polarity")
+    T.eq(pb, -1, "track B negative polarity")
+  end)
+
+  T.test("phase.live.quad_guitar_four_tracks_align_within_1ms_and_undo_restores_all", function()
+    local deltas_ms = {10, 22, 35, 48}
+    local tracks_list = {}
+    for i, ms in ipairs(deltas_ms) do
+      local tr = T.add_track("Quad " .. i)
+      local click_frame = math.floor(RATE * (ms / 1000.0))
+      T.add_item(tr, wav("quad_" .. ms, 1, click_frame, 0.85), 1.0)
+      tracks_list[i] = tr
+    end
+    T.select_only_tracks(tracks_list)
+    reaper.Undo_OnStateChange("quad_fixture")
+    load_tool(0)
+    _G.SGMPhaseAlignment.alignSelectedTracks()
+
+    local ref_t = nil
+    for i, ms in ipairs(deltas_ms) do
+      local item = reaper.GetTrackMediaItem(reaper.GetTrack(0, i - 1), 0)
+      local expected_pos = 1.0 - ((ms - deltas_ms[1]) / 1000.0)
+      T.near(T.item_pos(item), expected_pos, 0.001, "quad track " .. i .. " position within 1ms")
+      local t = _G.SGMPhaseAlignment.findFirstTransient(item)
+      if not ref_t then ref_t = t end
+      T.near(t, ref_t, 0.001, "quad track " .. i .. " aligned transient within 1ms")
+    end
+
+    reaper.Undo_DoUndo2(0)
+    for i = 1, #deltas_ms do
+      local item = reaper.GetTrackMediaItem(reaper.GetTrack(0, i - 1), 0)
+      T.near(T.item_pos(item), 1.0, 1e-9, "single-step undo restored quad track " .. i .. " D_POSITION")
+    end
+  end)
 end
