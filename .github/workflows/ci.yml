@@ -113,7 +113,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: step-security/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - uses: leafo/gh-actions-lua@v13
         with:
