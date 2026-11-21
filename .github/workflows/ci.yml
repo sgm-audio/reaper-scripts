@@ -11,7 +11,7 @@ jobs:
   lua-syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Lua 5.4 and luacheck
         run: |
           sudo apt-get update && sudo apt-get install -y lua5.4 luarocks
@@ -35,7 +35,7 @@ jobs:
     # must not silently turn into a passing QA run.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Lua 5.4
         run: sudo apt-get update && sudo apt-get install -y lua5.4
       - name: Lua regression tests
@@ -58,8 +58,8 @@ jobs:
   python-compile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Compile Python
@@ -68,8 +68,8 @@ jobs:
   python-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install pyflakes
@@ -88,8 +88,8 @@ jobs:
   python-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -112,10 +112,10 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
-      - uses: leafo/gh-actions-lua@v10
+      - uses: leafo/gh-actions-lua@v13
         with:
           luaVersion: "5.4"
       - name: Syntax, regression, API contracts
@@ -131,8 +131,8 @@ jobs:
     # Real REAPER 7.x (headless Xvfb): in-host Lua cases, Suno multi-format .rpp checks, and live AAF import via REAPER's Python.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install REAPER, Xvfb, and FFmpeg
@@ -155,7 +155,7 @@ jobs:
           mkdir -p host-logs-aaf
           SGM_HOST_ARTIFACTS=host-logs-aaf SGM_SCRIPT="$PWD/tests/reaper_host/aaf_live.py" SGM_PYTHON_LIB="$LIBPY" \
             SGM_PYTHONPATH="$SP" SGM_HOST_TIMEOUT=240 tests/reaper_host/run_host.sh "$PWD/reaper_linux_x86_64/REAPER"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: reaper-host-logs
@@ -167,8 +167,8 @@ jobs:
     # Runs the real htdemucs model on CPU. A missing backend or model download is a failure, not a skip.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install CPU torch and demucs
@@ -192,7 +192,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux JUCE dependencies
         if: runner.os == 'Linux'
         run: |
@@ -247,7 +247,7 @@ jobs:
           fi
       - name: Upload compiled Linux VST3 and Standalone artefacts
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sgm-utility-linux
           path: plugin/build/SGMUtility_artefacts
@@ -257,9 +257,9 @@ jobs:
     needs: plugin-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download compiled Linux VST3 and Standalone artefacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sgm-utility-linux
           path: vst3-dist
@@ -288,7 +288,7 @@ jobs:
           echo "JUCE_STANDALONE_LAUNCH_OK pid=$PID"
           kill "$PID" 2>/dev/null || true
           wait "$PID" 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: reaper-juce-host-logs
