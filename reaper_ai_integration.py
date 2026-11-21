@@ -342,26 +342,17 @@ class AAFInterface:
             stream.close()
 
         meta = mob.descriptor
-        data_fmt = ""
-        try:
-            data_fmt = meta["ContainerFormat"].value.name if "ContainerFormat" in meta else ""
-        except Exception:
-            data_fmt = ""
         is_container = bytes(data[:4]) in (b"RIFF", b"RF64", b"FORM")
         if not is_container and "QuantizationBits" in meta:
             # Raw PCM essence (PCMDescriptor) has no header: wrap it in a WAV using the
             # descriptor's real rate / channels / bit depth instead of dumping headerless bytes.
             sample_depth = meta["QuantizationBits"].value
             try:
-                sample_rate = (
-                    self.aafrational_value(meta["SampleRate"].value)
-                    if data_fmt == "MXF"
-                    else float(meta["AudioSamplingRate"].value)
-                )
+                sample_rate = int(round(self.aafrational_value(meta["SampleRate"].value)))
             except Exception:
-                sample_rate = float(meta["AudioSamplingRate"].value)
+                sample_rate = int(meta["AudioSamplingRate"].value)
             channels = int(meta["Channels"].value) if "Channels" in meta else 1
-            self.build_wav(filename, bytes(data), sample_depth, int(round(sample_rate)), channels=channels)
+            self.build_wav(filename, bytes(data), sample_depth, sample_rate, channels=channels)
         else:
             with open(filename, "wb") as f:
                 f.write(data)

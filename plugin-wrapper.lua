@@ -322,7 +322,8 @@ function PluginScanner:analyzePlugin(file_path)
   end
 
   -- Extract plugin name (remove only the final extension and common prefixes)
-  local name = filename:gsub("%.[^%.]+$", "")
+  -- "Plugin v2.5.vst3" -> "Plugin v2.5", not "Plugin v2".
+  local name = filename:match("^(.*)%.[^%.]+$") or filename
   name = name:gsub("^VST_", ""):gsub("^AU_", "")
 
   return {

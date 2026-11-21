@@ -64,27 +64,28 @@ return function(T)
     local norm_0db = 60.0 / 72.0   -- 0.0 dB on [-60, +12]
     local norm_m6db = 54.0 / 72.0  -- -6.0 dB on [-60, +12]
 
-    for _, mode in ipairs({{label = "mono", nch = 1}, {label = "stereo", nch = 2}}) do
+    local function render_rms(mode, gain_norm, bypass_norm)
       T.clear_project()
       local tr = T.add_track("JUCE " .. mode.label)
       T.add_item(tr, sine_wav("juce_" .. mode.label, mode.nch, 0.5), 0.0)
       local idx = add_sgm_utility(tr)
+      reaper.TrackFX_SetParamNormalized(tr, idx, 1, bypass_norm)
+      reaper.TrackFX_SetParamNormalized(tr, idx, 0, gain_norm)
+      return measure_track_rms(tr, mode.nch, 0.2, 0.2)
+    end
 
+    for _, mode in ipairs({{label = "mono", nch = 1}, {label = "stereo", nch = 2}}) do
       -- 1) 0.0 dB pass-through
-      reaper.TrackFX_SetParamNormalized(tr, idx, 1, 0.0) -- Bypass OFF
-      reaper.TrackFX_SetParamNormalized(tr, idx, 0, norm_0db)
-      local rms_unity = measure_track_rms(tr, mode.nch, 0.2, 0.2)
+      local rms_unity = render_rms(mode, norm_0db, 0.0)
       T.near(rms_unity, expected_unity, 0.015, mode.label .. " 0dB pass-through RMS")
 
       -- 2) -6.0 dB gain attenuation
-      reaper.TrackFX_SetParamNormalized(tr, idx, 0, norm_m6db)
-      local rms_m6 = measure_track_rms(tr, mode.nch, 0.2, 0.2)
+      local rms_m6 = render_rms(mode, norm_m6db, 0.0)
       T.near(rms_m6, expected_minus6, 0.015, mode.label .. " -6dB gain RMS")
       T.near(rms_m6 / rms_unity, 10.0 ^ (-6.0 / 20.0), 0.03, mode.label .. " -6dB/0dB gain ratio")
 
       -- 3) Bypass ON restores unity pass-through while Gain stays at -6dB
-      reaper.TrackFX_SetParamNormalized(tr, idx, 1, 1.0)
-      local rms_bypass = measure_track_rms(tr, mode.nch, 0.2, 0.2)
+      local rms_bypass = render_rms(mode, norm_m6db, 1.0)
       T.near(rms_bypass, expected_unity, 0.015, mode.label .. " bypass RMS")
       T.log("JUCE_VST3_AUDIO_OK", mode.label,
         string.format("unity=%.4f m6=%.4f bypass=%.4f", rms_unity, rms_m6, rms_bypass))
