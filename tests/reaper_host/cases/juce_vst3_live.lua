@@ -64,23 +64,44 @@ return function(T)
     local norm_0db = 60.0 / 72.0   -- 0.0 dB on [-60, +12]
     local norm_m6db = 54.0 / 72.0  -- -6.0 dB on [-60, +12]
 
+    local render_seq = 0
     local function render_rms(mode, gain_norm, bypass_norm)
+      render_seq = render_seq + 1
       T.clear_project()
       local tr = T.add_track("JUCE " .. mode.label)
-      local item = T.add_item(tr, sine_wav("juce_" .. mode.label, mode.nch, 0.5), 0.0)
+      T.add_item(tr, sine_wav("juce_" .. mode.label, mode.nch, 0.5), 0.0)
       local idx = add_sgm_utility(tr)
       reaper.TrackFX_SetParamNormalized(tr, idx, 1, bypass_norm)
       reaper.TrackFX_SetParamNormalized(tr, idx, 0, gain_norm)
 
-      -- CreateTrackAudioAccessor reads pre-FX audio; save project to tmpdir and
-      -- apply track FX to a rendered take so GetAudioAccessorSamples sees FX output.
-      reaper.Main_SaveProjectEx(0, T.tmpdir() .. "/juce_render_" .. mode.label .. ".rpp", 0)
-      reaper.SelectAllMediaItems(0, false)
-      reaper.SetMediaItemSelected(item, true)
-      -- 40361 = Item: Apply track/take FX to items (mono output)
-      -- 40209 = Item: Apply track/take FX to items (stereo)
-      reaper.Main_OnCommand(mode.nch == 1 and 40361 or 40209, 0)
-      return measure_track_rms(tr, mode.nch, 0.2, 0.2)
+      local out_dir = T.tmpdir()
+      local out_name = string.format("juce_out_%s_%d", mode.label, render_seq)
+      local out_wav = out_dir .. "/" .. out_name .. ".wav"
+      os.remove(out_wav)
+
+      reaper.GetSetProjectInfo_String(0, "RENDER_FILE", out_dir, true)
+      reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", out_name, true)
+      reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, true)   -- master mix
+      reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 1, true) -- entire project
+      reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", mode.nch, true)
+      reaper.GetSetProjectInfo(0, "RENDER_SRATE", RATE, true)
+
+      local rpp_path = out_dir .. "/" .. out_name .. ".rpp"
+      reaper.Main_SaveProjectEx(0, rpp_path, 0)
+
+      local reaper_bin = reaper.GetExePath() .. "/reaper"
+      local cfg_ini = reaper.GetResourcePath() .. "/reaper.ini"
+      local cmd = string.format(
+        'timeout 30 "%s" -nosplash -cfgfile "%s" -newinst -nonewinst -renderproject "%s" >/dev/null 2>&1',
+        reaper_bin, cfg_ini, rpp_path)
+      local ok = os.execute(cmd)
+      T.ok(ok == true or ok == 0, "reaper -renderproject succeeded for " .. out_name)
+      T.ok(reaper.file_exists(out_wav), "rendered WAV exists: " .. out_wav)
+
+      T.clear_project()
+      local tr_out = T.add_track("Rendered " .. mode.label)
+      T.add_item(tr_out, out_wav, 0.0)
+      return measure_track_rms(tr_out, mode.nch, 0.2, 0.2)
     end
 
     for _, mode in ipairs({{label = "mono", nch = 1}, {label = "stereo", nch = 2}}) do
