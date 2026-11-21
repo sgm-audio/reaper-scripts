@@ -27,13 +27,23 @@ local function json_string(value)
 end
 
 local function get_scan_paths()
-  local paths = {}
-  local function add(path) if path and path ~= "" then table.insert(paths, path) end end
+  local paths, seen = {}, {}
   local os_type = reaper.GetOS() or ""
-  if os_type == "Win32" or os_type == "Win64" then
+  local is_win = os_type == "Win32" or os_type == "Win64"
+  local function add(path)
+    if type(path) ~= "string" or path == "" then return end
+    local normalized = path:gsub("\\", "/"):gsub("/+$", "")
+    if normalized == "" then return end
+    local key = is_win and normalized:lower() or normalized
+    if not seen[key] then
+      seen[key] = true
+      table.insert(paths, normalized)
+    end
+  end
+  if is_win then
     local pf = (os.getenv("ProgramFiles") or "C:/Program Files"):gsub("\\", "/")
     local pf86 = (os.getenv("ProgramFiles(x86)") or "C:/Program Files (x86)"):gsub("\\", "/")
-    local cf = (os.getenv("CommonProgramFiles") or (pf .. "/Common Files")):gsub("\\", "/")
+    local cf = (os.getenv("CommonProgramFiles") or join_path(pf, "Common Files")):gsub("\\", "/")
     add(join_path(pf, "VSTPlugins"))
     add(join_path(pf86, "VSTPlugins"))
     add(join_path(pf, "Steinberg/VSTPlugins"))
@@ -43,7 +53,9 @@ local function get_scan_paths()
     add(join_path(pf86, "Waves/Plug-Ins V16"))
     add(join_path(pf, "Waves/Plug-Ins V16"))
     local localappdata = os.getenv("LOCALAPPDATA")
-    if localappdata then add(join_path(localappdata:gsub("\\", "/"), "Programs/Common/VST3")) end
+    if localappdata and localappdata ~= "" then
+      add(join_path(localappdata:gsub("\\", "/"), "Programs/Common/VST3"))
+    end
   elseif os_type:match("^OSX") or os_type:match("^macOS") then
     add("/Library/Audio/Plug-Ins/VST")
     add("/Library/Audio/Plug-Ins/VST3")
@@ -51,7 +63,7 @@ local function get_scan_paths()
     add("/Library/Audio/Plug-Ins/CLAP")
     add("/Library/Audio/Plug-Ins/LV2")
     local home = os.getenv("HOME")
-    if home then
+    if home and home ~= "" then
       for _, folder in ipairs({"VST", "VST3", "Components", "CLAP", "LV2"}) do
         add(join_path(home, "Library/Audio/Plug-Ins/" .. folder))
       end
@@ -59,7 +71,7 @@ local function get_scan_paths()
   else
     for _, path in ipairs({"/usr/lib/vst", "/usr/lib/lxvst", "/usr/lib/vst3", "/usr/lib/clap", "/usr/lib/lv2", "/usr/local/lib/vst", "/usr/local/lib/vst3", "/usr/local/lib/clap", "/usr/local/lib/lv2"}) do add(path) end
     local home = os.getenv("HOME")
-    if home then
+    if home and home ~= "" then
       for _, folder in ipairs({".vst", ".lxvst", ".vst3", ".clap", ".lv2"}) do add(join_path(home, folder)) end
     end
   end

@@ -253,12 +253,23 @@ class AAFInterface:
         self.essence_data = {}
 
     def open(self, filename):
+        self.close()
         if aaf2 is None:
             log("AAF support requires the 'pyaaf2' package.", ERROR)
             return False
+        if isinstance(filename, (str, os.PathLike)):
+            try:
+                with open(filename, "rb") as probe:
+                    if probe.read(8) != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+                        log("Could not open AAF file: invalid AAF/CFB header.", ERROR)
+                        return False
+            except OSError:
+                log("Could not open AAF file.", ERROR)
+                return False
         try:
             self.aaf = aaf2.open(filename, "r")
         except Exception:
+            self.aaf = None
             log("Could not open AAF file.", ERROR)
             return False
         try:

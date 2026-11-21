@@ -184,5 +184,51 @@ class SEMASBehaviorTests(unittest.TestCase):
         self.assertEqual(job.results["sample_rate"], 48000)
 
 
+class DemucsCliFailureTests(unittest.TestCase):
+    def test_cli_honest_failure_on_corrupt_weights_and_disk_full(self):
+        import contextlib
+        import errno
+        import io
+        import types
+        import yourmt3_stem_separator as yss
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "mix.wav"
+            sf.write(src, np.zeros((4410, 2), dtype=np.float32), 44100)
+            out_dir = Path(tmp) / "out"
+            out_dir.mkdir()
+
+            # 1) Missing/corrupt weights: Demucs exits non-zero -> CLI exits != 0 with actionable error
+            err_weights = io.StringIO()
+            fake_fail = types.SimpleNamespace(returncode=1, stdout="", stderr="FATAL: corrupt checkpoint weights")
+            with patch.object(yss.YourMT3StemSeparator, "_demucs_available", return_value=True), \
+                 patch("yourmt3_stem_separator.subprocess.run", return_value=fake_fail), \
+                 contextlib.redirect_stderr(err_weights):
+                with self.assertRaises(SystemExit) as ctx:
+                    yss.main([str(src), "-o", str(out_dir), "--model", "corrupt_htdemucs", "--device", "cpu"])
+            self.assertNotEqual(ctx.exception.code, 0)
+            self.assertIn("corrupt checkpoint weights", err_weights.getvalue())
+            self.assertEqual(list(out_dir.glob("*.wav")), [])
+
+            # 2) Disk full (ENOSPC) while writing output stem -> CLI exits != 0 with actionable message
+            err_enospc = io.StringIO()
+
+            def fake_run(cmd, **_kwargs):
+                temp_out = Path(cmd[cmd.index("-o") + 1]) / "htdemucs" / src.stem
+                temp_out.mkdir(parents=True, exist_ok=True)
+                sf.write(temp_out / "bass.wav", np.ones((4410, 2), dtype=np.float32) * 0.1, 44100)
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch.object(yss.YourMT3StemSeparator, "_demucs_available", return_value=True), \
+                 patch("yourmt3_stem_separator.subprocess.run", side_effect=fake_run), \
+                 patch.object(yss.sf, "write", side_effect=OSError(errno.ENOSPC, "No space left on device")), \
+                 contextlib.redirect_stderr(err_enospc):
+                with self.assertRaises(SystemExit) as ctx:
+                    yss.main([str(src), "-o", str(out_dir), "--device", "cpu", "-s", "bass"])
+            self.assertNotEqual(ctx.exception.code, 0)
+            self.assertIn("No space left on device", err_enospc.getvalue())
+            self.assertEqual(list(out_dir.glob("*.wav")), [])
+
+
 if __name__ == "__main__":
     unittest.main()
