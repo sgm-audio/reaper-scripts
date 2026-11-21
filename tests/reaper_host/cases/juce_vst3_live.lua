@@ -67,10 +67,19 @@ return function(T)
     local function render_rms(mode, gain_norm, bypass_norm)
       T.clear_project()
       local tr = T.add_track("JUCE " .. mode.label)
-      T.add_item(tr, sine_wav("juce_" .. mode.label, mode.nch, 0.5), 0.0)
+      local item = T.add_item(tr, sine_wav("juce_" .. mode.label, mode.nch, 0.5), 0.0)
       local idx = add_sgm_utility(tr)
       reaper.TrackFX_SetParamNormalized(tr, idx, 1, bypass_norm)
       reaper.TrackFX_SetParamNormalized(tr, idx, 0, gain_norm)
+
+      -- CreateTrackAudioAccessor reads pre-FX audio; save project to tmpdir and
+      -- apply track FX to a rendered take so GetAudioAccessorSamples sees FX output.
+      reaper.Main_SaveProjectEx(0, T.tmpdir() .. "/juce_render_" .. mode.label .. ".rpp", 0)
+      reaper.SelectAllMediaItems(0, false)
+      reaper.SetMediaItemSelected(item, true)
+      -- 40361 = Item: Apply track/take FX to items (mono output)
+      -- 40209 = Item: Apply track/take FX to items (stereo)
+      reaper.Main_OnCommand(mode.nch == 1 and 40361 or 40209, 0)
       return measure_track_rms(tr, mode.nch, 0.2, 0.2)
     end
 
